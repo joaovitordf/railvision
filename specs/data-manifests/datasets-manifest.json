@@ -1,0 +1,101 @@
+{
+  "audited_on": "2026-11-19",
+  "datasets": [
+    {
+      "id": "twist_labelled",
+      "name": "TWIST: Trains under Weather, Illumination, and Seasonal Time (labelled_dataset)",
+      "source_url": "https://zenodo.org/records/19472084",
+      "repository_url": "https://github.com/ds-kiel/TWIST",
+      "download_url": "https://zenodo.org/api/records/19472084/files/labelled_dataset.tar.gz/content",
+      "license": "CC-BY-4.0",
+      "audit_status": "downloaded_and_measured",
+      "archive_size_bytes": 596144002,
+      "archive_md5": "64d50175ce51c52f292c688a37c7a453",
+      "archive_sha256": "b6194915dd95070fa1afa2a99c8f44a03e6877fd5068030784cf655d86debda2",
+      "measured": {
+        "total_images": 11492,
+        "resolution": "640x480",
+        "corrupt_images": 0,
+        "exact_image_duplicates": 812,
+        "near_duplicate_window_matches": 4879,
+        "binary_labels": {
+          "train_images": 8000,
+          "validation_images": 1000,
+          "test_images": 1000,
+          "empty_label_files": 1884,
+          "positive_boxes_class_6_train": 8139,
+          "invalid_lines": 1
+        },
+        "detailed_labels": {
+          "images": 1492,
+          "invalid_lines": 2,
+          "class_mapping_from_archive": {
+            "0": "train",
+            "1": "locomotive",
+            "2": "wagon",
+            "3": "freight car",
+            "4": "ICE",
+            "5": "other",
+            "6": "object"
+          },
+          "class_counts": {
+            "0": 1472,
+            "1": 165,
+            "2": 1085,
+            "3": 747,
+            "4": 295,
+            "5": 0,
+            "6": 1503
+          }
+        }
+      },
+      "permitted_role": "detection_baseline_with_class_remapping_and_deduplication",
+      "limitations": [
+        "Câmera única fixa ao nível da via (sem vista elevada do interior de vagões abertos).",
+        "Sem rótulos de material ou nível de carregamento.",
+        "ID 6 significa 'train' em binary_labels e 'object' (placa/grade fixa) em detailed_labels.",
+        "Classe 2 ('wagon') corresponde a carros de passageiros; classe 3 ('freight car') inclui vagões tanque/fechados/pranchas."
+      ]
+    },
+    {
+      "id": "ufop_iron_ore_conveyor",
+      "name": "UFOP In-lab Image Dataset of Foreign Objects and Anomalies in Iron Ore Conveyor Belts",
+      "source_url": "https://data.mendeley.com/datasets/s25x2bnshz/1",
+      "api_url": "https://data.mendeley.com/public-api/datasets/s25x2bnshz/files?folder_id=root&version=1",
+      "license": "CC BY 4.0",
+      "audit_status": "remote_zip64_central_directory_inspected",
+      "archive_filename": "image-data.zip",
+      "archive_size_bytes": 6228464374,
+      "archive_sha256_declared": "f4ced924f274bcd729fd77ab0aca8fa72a48b5419077e2862b87ab175fd12480",
+      "measured_from_zip_index": {
+        "file_entries": 69636,
+        "uncompressed_total_bytes": 6254021577,
+        "extensions": {
+          ".jpeg": 42744,
+          ".jpg": 24398,
+          ".txt": 2474,
+          ".mp4": 19,
+          ".yaml": 1
+        },
+        "yolo_data_yaml": {
+          "nc": 1,
+          "names": ["conveyor"]
+        }
+      },
+      "permitted_role": "out_of_domain_reference_only",
+      "limitations": [
+        "Ambiente laboratorial em correia transportadora (boardcamera), não vagões ferroviários.",
+        "Rótulos YOLO anotam apenas 1 classe ('conveyor') e pastas dividem normal vs anomalia (madeira/objetos estranhos), sem multi-material ou nível de carga."
+      ]
+    },
+    {
+      "id": "wagons_images_classification",
+      "name": "Wagons Images Classification",
+      "source_url": "https://huggingface.co/datasets/UniqueData/wagons-images-classification",
+      "license": "CC-BY-NC-ND-4.0",
+      "audit_status": "excluded_by_license_and_size_policy",
+      "declared_examples": 18,
+      "permitted_role": "visual_reference_only_no_training"
+    }
+  ]
+}

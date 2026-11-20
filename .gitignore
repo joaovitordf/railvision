@@ -1,0 +1,47 @@
+# Dados brutos, derivados, mídia, modelos e saídas de execução
+/data/
+/artifacts/
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.tar.gz
+*.tar
+*.zip
+
+# Variáveis de ambiente locais
+.env
+.env.local
+.env.*.local
+
+# Backend (Python / FastAPI)
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/.venv/
+*.log
+
+# Frontend (Angular / Node)
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/coverage/
+
+# ML (Python)
+ml/.venv/
+ml/__pycache__/
+ml/.pytest_cache/
+ml/**/__pycache__/
+*.pyc
+*.egg-info/
+
+# Sistema operacional e IDEs
+.DS_Store
+Thumbs.db
+.idea/
+*.iml

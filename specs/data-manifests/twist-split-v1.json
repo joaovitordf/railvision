@@ -1,0 +1,723 @@
+{
+  "dataset": "TWIST detailed_labels (event-grouped, exact-dedup baseline + train-only near-dedup ablation)",
+  "source_dir": "data/processed/twist-labelled/labelled_data/detailed_labels",
+  "class_remap_policy": {
+    "TWIST_0_train": "dropped_whole_consist",
+    "TWIST_1_locomotive": "0: locomotive",
+    "TWIST_2_wagon": "1: passenger_wagon",
+    "TWIST_3_freight_car": "2: freight_car",
+    "TWIST_4_ICE": "3: high_speed_train",
+    "TWIST_6_object": "dropped_foreground_sign"
+  },
+  "source_total_images": 1492,
+  "exact_duplicates_removed_count": 8,
+  "exact_duplicates_removed": [
+    {
+      "removed": "train_2023-12-14_16.17.35_523.jpg",
+      "kept": "train_2023-12-14_16.17.35_414.jpg",
+      "sha256": "b4d0fe56d65ef8dea2abde4533eea1d90e93229300329819a7f6f99b06fc0d4a"
+    },
+    {
+      "removed": "train_2023-12-14_19.50.12_649.jpg",
+      "kept": "train_2023-12-14_19.50.12_507.jpg",
+      "sha256": "a03a86e468b0fb0d3bb1c75528bf3644e2221e302049da8d6a38b7875c164bdf"
+    },
+    {
+      "removed": "train_2023-12-18_16.27.51_086.jpg",
+      "kept": "train_2023-12-18_16.27.50_980.jpg",
+      "sha256": "7b772bbd072ca74f47bdc15ae05ac8d28bfb0addefa5ab252bacadd79db72987"
+    },
+    {
+      "removed": "train_2023-12-18_16.27.51_208.jpg",
+      "kept": "train_2023-12-18_16.27.50_980.jpg",
+      "sha256": "7b772bbd072ca74f47bdc15ae05ac8d28bfb0addefa5ab252bacadd79db72987"
+    },
+    {
+      "removed": "train_2024-01-09_11.16.10_181.jpg",
+      "kept": "train_2024-01-09_11.16.10_060.jpg",
+      "sha256": "5ccf0dce7b5286c29881856b9d6c80cc54a0f887d0c8592176af9d1ce22683a6"
+    },
+    {
+      "removed": "train_2024-01-09_11.16.10_313.jpg",
+      "kept": "train_2024-01-09_11.16.10_060.jpg",
+      "sha256": "5ccf0dce7b5286c29881856b9d6c80cc54a0f887d0c8592176af9d1ce22683a6"
+    },
+    {
+      "removed": "train_2024-01-09_11.16.10_449.jpg",
+      "kept": "train_2024-01-09_11.16.10_060.jpg",
+      "sha256": "5ccf0dce7b5286c29881856b9d6c80cc54a0f887d0c8592176af9d1ce22683a6"
+    },
+    {
+      "removed": "train_2024-01-09_23.20.15_801.jpg",
+      "kept": "train_2024-01-09_23.20.15_692.jpg",
+      "sha256": "8b46a8007221b98bb430905f91cdfe2ea74dc851114d132b770f6203aeea64be"
+    }
+  ],
+  "invalid_label_lines_dropped": 2,
+  "near_duplicates_filtered_train_only_dhash_le_2": 360,
+  "distinct_events_total": 46,
+  "twist_yolo_v1_stats": {
+    "train": {
+      "images": 1058,
+      "empty_label_files": 328,
+      "class_counts": {
+        "locomotive": 138,
+        "passenger_wagon": 680,
+        "freight_car": 570,
+        "high_speed_train": 187
+      }
+    },
+    "val": {
+      "images": 265,
+      "empty_label_files": 72,
+      "class_counts": {
+        "locomotive": 11,
+        "passenger_wagon": 214,
+        "freight_car": 67,
+        "high_speed_train": 56
+      }
+    },
+    "test": {
+      "images": 161,
+      "empty_label_files": 12,
+      "class_counts": {
+        "locomotive": 15,
+        "passenger_wagon": 187,
+        "freight_car": 107,
+        "high_speed_train": 52
+      }
+    }
+  },
+  "twist_yolo_v1_dedup_near_stats": {
+    "train": {
+      "images": 698,
+      "empty_label_files": 150,
+      "class_counts": {
+        "locomotive": 103,
+        "passenger_wagon": 608,
+        "freight_car": 510,
+        "high_speed_train": 92
+      }
+    },
+    "val": {
+      "images": 265,
+      "empty_label_files": 72,
+      "class_counts": {
+        "locomotive": 11,
+        "passenger_wagon": 214,
+        "freight_car": 67,
+        "high_speed_train": 56
+      }
+    },
+    "test": {
+      "images": 161,
+      "empty_label_files": 12,
+      "class_counts": {
+        "locomotive": 15,
+        "passenger_wagon": 187,
+        "freight_car": 107,
+        "high_speed_train": 52
+      }
+    }
+  },
+  "events": [
+    {
+      "event_id": 0,
+      "split": "train",
+      "start": "2023-12-08T17:25:43",
+      "end": "2023-12-08T17:25:50",
+      "images": 13,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 49,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 1,
+      "split": "val",
+      "start": "2023-12-08T18:31:17",
+      "end": "2023-12-08T18:31:26",
+      "images": 18,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 35,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 2,
+      "split": "train",
+      "start": "2023-12-08T19:37:15",
+      "end": "2023-12-08T19:37:25",
+      "images": 20,
+      "class_counts": {
+        "locomotive": 6,
+        "passenger_wagon": 0,
+        "freight_car": 40,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 3,
+      "split": "val",
+      "start": "2023-12-08T23:06:07",
+      "end": "2023-12-08T23:06:21",
+      "images": 28,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 25
+      }
+    },
+    {
+      "event_id": 4,
+      "split": "train",
+      "start": "2023-12-08T23:37:56",
+      "end": "2023-12-08T23:38:06",
+      "images": 20,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 37,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 5,
+      "split": "train",
+      "start": "2023-12-09T03:13:53",
+      "end": "2023-12-09T03:14:33",
+      "images": 79,
+      "class_counts": {
+        "locomotive": 22,
+        "passenger_wagon": 153,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 6,
+      "split": "test",
+      "start": "2023-12-09T08:44:53",
+      "end": "2023-12-09T08:44:54",
+      "images": 3,
+      "class_counts": {
+        "locomotive": 3,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 7,
+      "split": "test",
+      "start": "2023-12-09T11:20:39",
+      "end": "2023-12-09T11:20:44",
+      "images": 11,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 58,
+        "freight_car": 0,
+        "high_speed_train": 11
+      }
+    },
+    {
+      "event_id": 8,
+      "split": "train",
+      "start": "2023-12-09T14:52:57",
+      "end": "2023-12-09T14:53:04",
+      "images": 15,
+      "class_counts": {
+        "locomotive": 12,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 9,
+      "split": "train",
+      "start": "2023-12-09T21:23:24",
+      "end": "2023-12-09T21:23:30",
+      "images": 13,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 10,
+      "split": "train",
+      "start": "2023-12-09T21:30:19",
+      "end": "2023-12-09T21:30:24",
+      "images": 10,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 25,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 11,
+      "split": "val",
+      "start": "2023-12-10T00:28:48",
+      "end": "2023-12-10T00:28:55",
+      "images": 15,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 25,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 12,
+      "split": "train",
+      "start": "2023-12-10T07:53:42",
+      "end": "2023-12-10T07:53:53",
+      "images": 22,
+      "class_counts": {
+        "locomotive": 2,
+        "passenger_wagon": 28,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 13,
+      "split": "train",
+      "start": "2023-12-10T14:01:25",
+      "end": "2023-12-10T14:01:25",
+      "images": 2,
+      "class_counts": {
+        "locomotive": 2,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 14,
+      "split": "test",
+      "start": "2023-12-10T14:19:00",
+      "end": "2023-12-10T14:19:01",
+      "images": 2,
+      "class_counts": {
+        "locomotive": 2,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 15,
+      "split": "test",
+      "start": "2023-12-11T08:36:54",
+      "end": "2023-12-11T08:37:04",
+      "images": 21,
+      "class_counts": {
+        "locomotive": 3,
+        "passenger_wagon": 0,
+        "freight_car": 107,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 16,
+      "split": "train",
+      "start": "2023-12-13T09:40:19",
+      "end": "2023-12-13T09:40:20",
+      "images": 3,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 17,
+      "split": "train",
+      "start": "2023-12-13T10:22:52",
+      "end": "2023-12-13T10:22:55",
+      "images": 7,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 18,
+      "split": "train",
+      "start": "2023-12-13T11:27:50",
+      "end": "2023-12-13T11:27:56",
+      "images": 12,
+      "class_counts": {
+        "locomotive": 18,
+        "passenger_wagon": 16,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 19,
+      "split": "val",
+      "start": "2023-12-14T13:09:06",
+      "end": "2023-12-14T13:09:11",
+      "images": 39,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 20,
+      "split": "train",
+      "start": "2023-12-14T14:12:29",
+      "end": "2023-12-14T14:12:34",
+      "images": 48,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 21,
+      "split": "train",
+      "start": "2023-12-14T16:17:33",
+      "end": "2023-12-14T16:17:55",
+      "images": 187,
+      "class_counts": {
+        "locomotive": 27,
+        "passenger_wagon": 0,
+        "freight_car": 508,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 22,
+      "split": "train",
+      "start": "2023-12-14T19:26:15",
+      "end": "2023-12-14T19:26:15",
+      "images": 1,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 23,
+      "split": "val",
+      "start": "2023-12-14T19:50:04",
+      "end": "2023-12-14T19:50:12",
+      "images": 72,
+      "class_counts": {
+        "locomotive": 11,
+        "passenger_wagon": 0,
+        "freight_car": 67,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 24,
+      "split": "test",
+      "start": "2023-12-18T12:13:42",
+      "end": "2023-12-18T12:13:55",
+      "images": 41,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 41
+      }
+    },
+    {
+      "event_id": 25,
+      "split": "train",
+      "start": "2023-12-18T12:44:33",
+      "end": "2023-12-18T12:44:45",
+      "images": 106,
+      "class_counts": {
+        "locomotive": 1,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 106
+      }
+    },
+    {
+      "event_id": 26,
+      "split": "train",
+      "start": "2023-12-18T13:23:16",
+      "end": "2023-12-18T13:23:17",
+      "images": 12,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 27,
+      "split": "train",
+      "start": "2023-12-18T13:32:48",
+      "end": "2023-12-18T13:32:48",
+      "images": 5,
+      "class_counts": {
+        "locomotive": 5,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 28,
+      "split": "val",
+      "start": "2023-12-18T14:19:51",
+      "end": "2023-12-18T14:19:54",
+      "images": 31,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 31
+      }
+    },
+    {
+      "event_id": 29,
+      "split": "train",
+      "start": "2023-12-18T14:31:15",
+      "end": "2023-12-18T14:31:22",
+      "images": 63,
+      "class_counts": {
+        "locomotive": 26,
+        "passenger_wagon": 96,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 30,
+      "split": "train",
+      "start": "2023-12-18T16:27:03",
+      "end": "2023-12-18T16:28:00",
+      "images": 142,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 251,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 31,
+      "split": "test",
+      "start": "2023-12-18T16:49:59",
+      "end": "2023-12-18T16:50:07",
+      "images": 75,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 129,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 32,
+      "split": "train",
+      "start": "2023-12-22T10:31:45",
+      "end": "2023-12-22T10:31:46",
+      "images": 11,
+      "class_counts": {
+        "locomotive": 10,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 33,
+      "split": "train",
+      "start": "2023-12-22T12:35:04",
+      "end": "2023-12-22T12:35:08",
+      "images": 42,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 34,
+      "split": "train",
+      "start": "2023-12-29T12:43:20",
+      "end": "2023-12-29T12:44:23",
+      "images": 53,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 49
+      }
+    },
+    {
+      "event_id": 35,
+      "split": "val",
+      "start": "2023-12-29T12:48:32",
+      "end": "2023-12-29T12:49:36",
+      "images": 49,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 154,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 36,
+      "split": "train",
+      "start": "2024-01-03T14:40:36",
+      "end": "2024-01-03T14:40:38",
+      "images": 12,
+      "class_counts": {
+        "locomotive": 2,
+        "passenger_wagon": 0,
+        "freight_car": 22,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 37,
+      "split": "train",
+      "start": "2024-01-04T09:55:02",
+      "end": "2024-01-04T09:55:06",
+      "images": 33,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 38,
+      "split": "train",
+      "start": "2024-01-08T11:44:40",
+      "end": "2024-01-08T11:44:54",
+      "images": 36,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 32
+      }
+    },
+    {
+      "event_id": 39,
+      "split": "test",
+      "start": "2024-01-08T12:50:31",
+      "end": "2024-01-08T12:50:32",
+      "images": 8,
+      "class_counts": {
+        "locomotive": 7,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 40,
+      "split": "train",
+      "start": "2024-01-09T10:32:52",
+      "end": "2024-01-09T10:33:11",
+      "images": 19,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 8,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 41,
+      "split": "train",
+      "start": "2024-01-09T11:16:03",
+      "end": "2024-01-09T11:16:14",
+      "images": 18,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 17,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 42,
+      "split": "train",
+      "start": "2024-01-09T11:30:43",
+      "end": "2024-01-09T11:30:46",
+      "images": 24,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 43,
+      "split": "val",
+      "start": "2024-01-09T13:05:27",
+      "end": "2024-01-09T13:05:29",
+      "images": 13,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 44,
+      "split": "train",
+      "start": "2024-01-09T23:20:14",
+      "end": "2024-01-09T23:20:17",
+      "images": 24,
+      "class_counts": {
+        "locomotive": 0,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    },
+    {
+      "event_id": 45,
+      "split": "train",
+      "start": "2024-03-16T16:33:58",
+      "end": "2024-03-16T16:33:59",
+      "images": 6,
+      "class_counts": {
+        "locomotive": 5,
+        "passenger_wagon": 0,
+        "freight_car": 0,
+        "high_speed_train": 0
+      }
+    }
+  ]
+}

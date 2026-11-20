@@ -1,0 +1,18 @@
+@import './styles/tokens.css';
+@import './styles/shell.css';
+@import './styles/ui.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--rv-bg-app);
+  color: var(--rv-text-primary);
+}

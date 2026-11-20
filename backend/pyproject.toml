@@ -1,0 +1,25 @@
+[project]
+name = "railvision-backend"
+version = "0.1.0"
+description = "FastAPI backend for RailVision AI (Stage M0 incremental migration)."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "alembic==1.20.1",
+    "av==19.0.2",
+    "fastapi==0.165.0",
+    "psycopg[binary]==3.3.9",
+    "pydantic==2.14.4",
+    "pydantic-settings==2.16.3",
+    "python-multipart==0.0.34",
+    "SQLAlchemy==2.1.9",
+    "uvicorn==0.54.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

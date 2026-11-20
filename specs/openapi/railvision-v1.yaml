@@ -1,0 +1,505 @@
+openapi: 3.1.0
+info:
+  title: RailVision AI API
+  version: 0.3.0
+  description: >
+    Contrato REST do backend Python + FastAPI do RailVision AI.
+    Novas inspeções executam detecção real (PyTorch CUDA) e rastreamento ByteTrack sobre vídeos locais;
+    campos de material e nível ordinal permanecem marcados como not_evaluated até treinamento da Fase 5.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Servidor local MVP
+paths:
+  /api/v1/inspections:
+    get:
+      summary: Listar inspeções
+      operationId: listInspections
+      responses:
+        "200":
+          description: Lista de inspeções ordenada da mais recente para a mais antiga
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InspectionSummary"
+    post:
+      summary: Criar inspeção com upload de vídeo
+      operationId: createInspection
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                title:
+                  type: string
+                  maxLength: 200
+                notes:
+                  type: string
+                  maxLength: 2000
+      responses:
+        "201":
+          description: Inspeção criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionSummary"
+        "400":
+          description: Arquivo ausente ou formato/assinatura inválidos
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "413":
+          description: Arquivo excede o limite configurado
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /api/v1/inspections/{id}:
+    get:
+      summary: Obter detalhes da inspeção
+      operationId: getInspectionById
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "200":
+          description: Detalhes da inspeção
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectionDetail"
+        "404":
+          description: Inspeção não encontrada
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /api/v1/inspections/{id}/process:
+    post:
+      summary: Iniciar ou reprocessar inspeção de forma assíncrona
+      operationId: processInspection
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "202":
+          description: Job enfileirado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessingJobResponse"
+        "404":
+          description: Inspeção não encontrada
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "409":
+          description: Já existe um processamento ativo para esta inspeção
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /api/v1/inspections/{id}/media:
+    get:
+      summary: Reproduzir mídia da inspeção com suporte a HTTP Range
+      operationId: streamInspectionMedia
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+        - name: Range
+          in: header
+          required: false
+          schema:
+            type: string
+          example: bytes=0-1048575
+      responses:
+        "200":
+          description: Fluxo completo do vídeo
+        "206":
+          description: Trecho parcial do vídeo
+        "404":
+          description: Mídia não encontrada
+        "416":
+          description: Intervalo de bytes inválido
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /api/v1/inspections/{id}/wagons:
+    get:
+      summary: Listar resultados consolidados de vagões do último job concluído
+      operationId: listInspectionWagons
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "200":
+          description: Lista ordenada por sequenceIndex
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WagonResultResponse"
+  /api/v1/inspections/{id}/wagons/{wagonId}:
+    get:
+      summary: Obter resultado consolidado de um vagão específico
+      operationId: getInspectionWagon
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+        - name: wagonId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Resultado do vagão
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WagonResultResponse"
+  /api/v1/inspections/{id}/wagons/{wagonId}/observations:
+    get:
+      summary: Listar observações selecionadas de um vagão
+      operationId: listWagonObservations
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+        - name: wagonId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Observações por frame/timestamp
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WagonObservationResponse"
+  /api/v1/jobs/{id}:
+    get:
+      summary: Consultar status de job de processamento
+      operationId: getJobStatus
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "200":
+          description: Estado do job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessingJobResponse"
+  /api/v1/models:
+    get:
+      summary: Listar versões de modelo registradas
+      operationId: listModelVersions
+      responses:
+        "200":
+          description: Versões de modelo
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ModelVersionResponse"
+components:
+  parameters:
+    UuidPathId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    ProblemDetail:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+    InspectionSummary:
+      type: object
+      required: [id, title, status, originalFilename, contentType, fileSizeBytes, sha256Checksum, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [UPLOADED, QUEUED, PROCESSING, COMPLETED, FAILED]
+        originalFilename:
+          type: string
+        contentType:
+          type: string
+        fileSizeBytes:
+          type: integer
+          format: int64
+        sha256Checksum:
+          type: string
+        latestJobId:
+          type: string
+          format: uuid
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    InspectionDetail:
+      allOf:
+        - $ref: "#/components/schemas/InspectionSummary"
+        - type: object
+          properties:
+            durationMs:
+              type: integer
+              format: int64
+              nullable: true
+            widthPx:
+              type: integer
+              nullable: true
+            heightPx:
+              type: integer
+              nullable: true
+            fps:
+              type: number
+              nullable: true
+            codec:
+              type: string
+              nullable: true
+            wagonCount:
+              type: integer
+            reviewRequiredCount:
+              type: integer
+            latestJob:
+              $ref: "#/components/schemas/ProcessingJobResponse"
+              nullable: true
+    ProcessingJobResponse:
+      type: object
+      required: [id, inspectionId, status, engineType, isDemoSimulation, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        inspectionId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [QUEUED, RUNNING, COMPLETED, FAILED]
+        progressPercent:
+          type: integer
+          nullable: true
+        engineType:
+          type: string
+        isDemoSimulation:
+          type: boolean
+        errorCode:
+          type: string
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    WagonResultResponse:
+      type: object
+      required: [id, inspectionId, jobId, wagonIdentity, loadingEstimate, modelVersions, consolidation, qualityFlags, reviewRequired, reviewReasons, isExample, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        inspectionId:
+          type: string
+          format: uuid
+        jobId:
+          type: string
+          format: uuid
+        wagonIdentity:
+          type: object
+          properties:
+            trackId:
+              type: string
+            sequenceIndex:
+              type: integer
+            physicalId:
+              type: string
+              nullable: true
+        material:
+          type: object
+          nullable: true
+          description: Null quando loadingEstimate.level == 'empty'
+          properties:
+            materialClass:
+              type: string
+            confidence:
+              type: number
+            voteDistribution:
+              type: object
+              additionalProperties:
+                type: integer
+            rejectedAsUnknown:
+              type: boolean
+        loadingEstimate:
+          type: object
+          properties:
+            level:
+              type: string
+              enum: [empty, low, medium, high, very_high]
+            levelObservationSpread:
+              type: array
+              items:
+                type: string
+            estimatedFillPercentage:
+              type: number
+              nullable: true
+            confidence:
+              type: number
+            measurementType:
+              type: string
+            physicalVolumeVerified:
+              type: boolean
+        modelVersions:
+          type: object
+          properties:
+            detector:
+              type: string
+              nullable: true
+            tracker:
+              type: string
+              nullable: true
+            material:
+              type: string
+              nullable: true
+            loading:
+              type: string
+              nullable: true
+        consolidation:
+          type: object
+          properties:
+            observationsCount:
+              type: integer
+            disagreements:
+              type: array
+              items:
+                type: string
+            method:
+              type: string
+              nullable: true
+        qualityFlags:
+          type: array
+          items:
+            type: string
+        reviewRequired:
+          type: boolean
+        reviewReasons:
+          type: array
+          items:
+            type: string
+        isExample:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    WagonObservationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        wagonResultId:
+          type: string
+          format: uuid
+        frameIndex:
+          type: integer
+        frameTimestampMs:
+          type: integer
+          format: int64
+        boundingBox:
+          type: object
+          properties:
+            x:
+              type: number
+            y:
+              type: number
+            width:
+              type: number
+            height:
+              type: number
+            coordinateSystem:
+              type: string
+        detectedClass:
+          type: string
+        detectionConfidence:
+          type: number
+        materialClass:
+          type: string
+          nullable: true
+        materialConfidence:
+          type: number
+          nullable: true
+        loadingLevel:
+          type: string
+          nullable: true
+        loadingConfidence:
+          type: number
+          nullable: true
+        isExample:
+          type: boolean
+    ModelVersionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        task:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        runtime:
+          type: string
+        weightsSha256:
+          type: string
+          nullable: true
+        artifactRef:
+          type: string
+          nullable: true
+        isDemoPlaceholder:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time

@@ -1,0 +1,78 @@
+:root {
+  --rv-sidebar-width: 248px;
+  --rv-sidebar-collapsed: 72px;
+  --rv-topbar-height: 64px;
+
+  --rv-bg-app: #f3f6fa;
+  --rv-bg-surface: #ffffff;
+  --rv-bg-surface-muted: #f8fafc;
+  --rv-bg-sidebar: #0f2744;
+  --rv-bg-sidebar-hover: rgba(255, 255, 255, 0.08);
+  --rv-bg-sidebar-active: rgba(34, 184, 207, 0.2);
+
+  --rv-text-primary: #102033;
+  --rv-text-secondary: #4c5d73;
+  --rv-text-muted: #6e7f94;
+  --rv-text-sidebar: #e2eaf4;
+  --rv-text-sidebar-muted: #9eb3cc;
+
+  --rv-border: #dce4ee;
+  --rv-border-strong: #c2cfe0;
+
+  --rv-accent: #0b7285;
+  --rv-accent-strong: #085666;
+  --rv-accent-soft: #e3f5f8;
+
+  --rv-success-bg: #e6f6ed;
+  --rv-success-text: #146c3b;
+  --rv-info-bg: #e6f1fc;
+  --rv-info-text: #1558a0;
+  --rv-warn-bg: #fef3c7;
+  --rv-warn-text: #92400e;
+  --rv-warn-border: #f59e0b;
+  --rv-error-bg: #fee2e2;
+  --rv-error-text: #991b1b;
+  --rv-error-border: #ef4444;
+
+  --rv-radius-sm: 6px;
+  --rv-radius-md: 10px;
+  --rv-radius-lg: 14px;
+  --rv-shadow-sm: 0 1px 3px rgba(15, 39, 68, 0.08);
+  --rv-shadow-md: 0 6px 20px rgba(15, 39, 68, 0.12);
+}
+
+:root[data-theme='dark'] {
+  --rv-bg-app: #0b1320;
+  --rv-bg-surface: #131f33;
+  --rv-bg-surface-muted: #19273e;
+  --rv-bg-sidebar: #091423;
+  --rv-bg-sidebar-hover: rgba(255, 255, 255, 0.07);
+  --rv-bg-sidebar-active: rgba(34, 184, 207, 0.22);
+
+  --rv-text-primary: #edf2f9;
+  --rv-text-secondary: #b5c3d6;
+  --rv-text-muted: #8a9ab0;
+  --rv-text-sidebar: #e2eaf4;
+  --rv-text-sidebar-muted: #8aa1bd;
+
+  --rv-border: #24354f;
+  --rv-border-strong: #32486b;
+
+  --rv-accent: #22b8cf;
+  --rv-accent-strong: #3bc9db;
+  --rv-accent-soft: rgba(34, 184, 207, 0.14);
+
+  --rv-success-bg: rgba(20, 108, 59, 0.25);
+  --rv-success-text: #6ee7b7;
+  --rv-info-bg: rgba(21, 88, 160, 0.25);
+  --rv-info-text: #93c5fd;
+  --rv-warn-bg: rgba(217, 119, 6, 0.2);
+  --rv-warn-text: #fcd34d;
+  --rv-warn-border: #d97706;
+  --rv-error-bg: rgba(220, 38, 38, 0.2);
+  --rv-error-text: #fca5a5;
+  --rv-error-border: #dc2626;
+
+  --rv-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --rv-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
