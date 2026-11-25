@@ -14,6 +14,8 @@ from fastapi.testclient import TestClient
 import pytest
 import sqlalchemy as sa
 
+pytestmark = pytest.mark.integration
+
 from app.core.config import Settings, get_settings
 from app.core.paths import BACKEND_ROOT, REPO_ROOT
 from app.db.models import Inspection, ProcessingJob
@@ -201,6 +203,10 @@ def test_full_inspection_media_range_and_async_demo_job_workflow(isolated_db) ->
         assert detail_after["wagonCount"] == 3
         assert detail_after["reviewRequiredCount"] == 1
 
+        listed_after = client.get("/api/v1/inspections").json()
+        assert listed_after[0]["wagonCount"] == 3
+        assert "durationMs" in listed_after[0]
+
         # Verify wagons, empty wagon rule, observations, and models
         wagons = client.get(f"/api/v1/inspections/{insp_id}/wagons").json()
         assert len(wagons) == 3
@@ -248,6 +254,7 @@ def _export_short_vid15_mp4(out_path: Path, num_frames: int = 16) -> Path:
     return out_path
 
 
+@pytest.mark.gpu
 def test_real_vision_inspection_workflow_gpu_and_bytetrack(isolated_db, tmp_path: Path) -> None:
     """Run default VisionInspectionInferenceEngine on MP4 clip verifying real GPU detections and not_evaluated cargo."""
     settings, _, _, iso_factory = isolated_db
@@ -356,3 +363,122 @@ def test_stale_job_recovery_marks_interrupted_jobs_and_inspections_failed(isolat
         assert job.status == "FAILED"
         assert job.error_code == "PROCESS_INTERRUPTED"
         assert insp.status == "FAILED"
+
+
+def test_ws0_0002_db_constraints_and_process_request_model_selection(isolated_db, tmp_path: Path) -> None:
+    """Validate 0002 unique partial active-job index, runtime model uniqueness, and ProcessInspectionRequest."""
+    from sqlalchemy.exc import IntegrityError
+    from app.db.models import ModelVersion
+
+    settings, _, _, iso_factory = isolated_db
+    now = datetime.now(timezone.utc)
+    insp_id = uuid4()
+
+    with iso_factory() as db:
+        db.add(
+            Inspection(
+                id=insp_id,
+                title="Constraint Check",
+                notes=None,
+                status="QUEUED",
+                original_filename="c.mp4",
+                stored_filename=f"{uuid4()}.mp4",
+                content_type="video/mp4",
+                file_size_bytes=64,
+                sha256_checksum="b" * 64,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        db.add(
+            ProcessingJob(
+                id=uuid4(),
+                inspection_id=insp_id,
+                status="QUEUED",
+                progress_percent=0,
+                engine_type="VISION_PYTORCH_CUDA",
+                is_demo_simulation=False,
+                created_at=now,
+            )
+        )
+        db.commit()
+
+        # Partial unique index uq_processing_jobs_one_active_per_inspection must reject second active job
+        db.add(
+            ProcessingJob(
+                id=uuid4(),
+                inspection_id=insp_id,
+                status="RUNNING",
+                progress_percent=10,
+                engine_type="VISION_PYTORCH_CUDA",
+                is_demo_simulation=False,
+                created_at=now,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+
+        # uq_model_versions_task_name_version_runtime allows same task/name/version with distinct runtime
+        db.add(
+            ModelVersion(
+                id=uuid4(),
+                task="detector",
+                name="exp04c_yolo26n_opentop_640",
+                version="exp04c_yolo26n_opentop_freeze10",
+                runtime="CPUExecutionProvider",
+                weights_sha256="1" * 64,
+                artifact_ref="artifacts/models/onnx/exp04c_yolo26n_opentop_640.onnx",
+                is_demo_placeholder=False,
+                created_at=now,
+            )
+        )
+        db.add(
+            ModelVersion(
+                id=uuid4(),
+                task="detector",
+                name="exp04c_yolo26n_opentop_640",
+                version="exp04c_yolo26n_opentop_freeze10",
+                runtime="PyTorch CPU",
+                weights_sha256="2" * 64,
+                artifact_ref="artifacts/runs/detect/exp04c_yolo26n_opentop_freeze10/weights/best.pt",
+                is_demo_placeholder=False,
+                created_at=now,
+            )
+        )
+        db.commit()
+
+    # Exercise ProcessInspectionRequest with explicit modelId + onnx_cpu runtime end-to-end
+    clip_path = _export_short_vid15_mp4(tmp_path / "vid15_onnx_req.mp4", num_frames=8)
+    capped = settings.model_copy(update={"max_video_frames_per_ui_run": 8})
+    app = create_app(capped, session_factory=iso_factory)
+    with TestClient(app) as client:
+        up = client.post(
+            "/api/v1/inspections",
+            data={"title": "Explicit ONNX CPU Model Request"},
+            files={"file": (clip_path.name, clip_path.read_bytes(), "video/mp4")},
+        )
+        assert up.status_code == 201
+        real_insp = up.json()["id"]
+
+        proc = client.post(
+            f"/api/v1/inspections/{real_insp}/process",
+            json={
+                "modelId": "exp04c_yolo26n_opentop_640",
+                "runtime": "onnx_cpu",
+                "confThreshold": 0.25,
+                "iouThreshold": 0.45,
+                "sampleFps": 5,
+            },
+        )
+        assert proc.status_code == 202
+        job_id = proc.json()["id"]
+        deadline = time.monotonic() + 30.0
+        polled = proc.json()
+        while time.monotonic() < deadline and polled["status"] in {"QUEUED", "RUNNING"}:
+            time.sleep(0.1)
+            polled = client.get(f"/api/v1/jobs/{job_id}").json()
+        assert polled["status"] == "COMPLETED", polled.get("errorMessage")
+
+        models_after = client.get("/api/v1/models").json()
+        assert any(m["runtime"] == "CPUExecutionProvider" for m in models_after)

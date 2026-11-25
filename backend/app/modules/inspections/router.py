@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Header, Request, Response, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, Header, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session
 from app.modules.inspections.schemas import InspectionDetailResponse, InspectionSummaryResponse
 from app.modules.inspections.service import InspectionService
-from app.modules.jobs.schemas import ProcessingJobResponse
+from app.modules.jobs.schemas import ProcessInspectionRequest, ProcessingJobResponse
 from app.modules.jobs.service import ProcessingJobService
 from app.modules.media.storage import LocalMediaStorageService
 from app.modules.results.schemas import WagonObservationResponse, WagonResultResponse
@@ -42,7 +42,10 @@ def list_inspections(
 ) -> list[InspectionSummaryResponse]:
     """List inspections ordered by creation timestamp descending."""
     inspection_service: InspectionService = request.app.state.inspection_service
-    return [inspection_service.to_summary(item) for item in inspection_service.list_inspections(db)]
+    return [
+        inspection_service.to_summary(item, wagon_count=wagon_count)
+        for item, wagon_count in inspection_service.list_inspections_with_counts(db)
+    ]
 
 
 @router.get("/{inspection_id}", response_model=InspectionDetailResponse, name="get_inspection")
@@ -58,7 +61,7 @@ def get_inspection(
 
     inspection = inspection_service.get_by_id(db, inspection_id)
     latest_job = job_service.find_latest_for_inspection(db, inspection_id)
-    completed_job_id = latest_job.id if (latest_job is not None and latest_job.status == "COMPLETED") else None
+    completed_job_id = results_service.find_latest_completed_job_id(db, inspection_id)
     wagon_count, review_required_count = results_service.summarize_for_job(db, inspection_id, completed_job_id)
 
     return inspection_service.to_detail(
@@ -73,11 +76,12 @@ def get_inspection(
 def process_inspection(
     inspection_id: UUID,
     request: Request,
+    payload: ProcessInspectionRequest | None = Body(default=None),
     db: Session = Depends(get_db_session),
 ) -> ProcessingJobResponse:
     """Enqueue asynchronous processing for an inspection."""
     job_service: ProcessingJobService = request.app.state.job_service
-    job = job_service.enqueue_processing(db, inspection_id)
+    job = job_service.enqueue_processing(db, inspection_id, options=payload)
     return job_service.to_job_response(job)
 
 

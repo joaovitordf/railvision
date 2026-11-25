@@ -7,10 +7,22 @@ import json
 import zipfile
 from collections import Counter
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
 MENDELEY_FILES_API = "https://data.mendeley.com/public-api/datasets/s25x2bnshz/files?folder_id=root&version=1"
+ALLOWED_DOWNLOAD_HOST_SUFFIXES = ("mendeley.com", "amazonaws.com", "elsevier.com", "cloudfront.net")
+
+
+def _validate_allowed_download_url(url: str) -> str:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host:
+        raise ValueError(f"Blocked untrusted download URL scheme/host: {url}")
+    if not any(host == suffix or host.endswith(f".{suffix}") for suffix in ALLOWED_DOWNLOAD_HOST_SUFFIXES):
+        raise ValueError(f"Blocked unexpected download host '{host}' in URL: {url}")
+    return url
 
 
 class HttpRangeFile(io.RawIOBase):
@@ -84,7 +96,7 @@ def main() -> None:
     files = meta_resp.json()
     target = files[0]
     details = target["content_details"]
-    download_url = details["download_url"]
+    download_url = _validate_allowed_download_url(str(details["download_url"]))
     total_size = int(target["size"])
     sha256_declared = details["sha256_hash"]
 

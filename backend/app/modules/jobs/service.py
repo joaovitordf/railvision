@@ -6,12 +6,13 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictException, ResourceNotFoundException
 from app.db.models import Inspection, ProcessingJob
 from app.modules.jobs.engine import InspectionInferenceEngine
-from app.modules.jobs.schemas import ProcessingJobResponse
+from app.modules.jobs.schemas import ProcessInspectionRequest, ProcessingJobResponse
 from app.modules.jobs.worker import JobExecutionManager
 
 ACTIVE_JOB_STATUSES = ("QUEUED", "RUNNING")
@@ -29,9 +30,17 @@ class ProcessingJobService:
         self._inference_engine = inference_engine
         self._worker_manager = worker_manager
 
-    def enqueue_processing(self, db: Session, inspection_id: UUID) -> ProcessingJob:
-        """Create a QUEUED job, commit DB changes, then dispatch async execution."""
-        inspection = db.get(Inspection, inspection_id)
+    def enqueue_processing(
+        self,
+        db: Session,
+        inspection_id: UUID,
+        *,
+        options: ProcessInspectionRequest | None = None,
+    ) -> ProcessingJob:
+        """Create a QUEUED job under row lock, commit DB changes, then dispatch async execution."""
+        inspection = db.scalar(
+            sa.select(Inspection).where(Inspection.id == inspection_id).with_for_update()
+        )
         if inspection is None:
             raise ResourceNotFoundException(f"Inspeção não encontrada: {inspection_id}")
 
@@ -60,10 +69,25 @@ class ProcessingJobService:
         inspection.status = "QUEUED"
         inspection.latest_job_id = job.id
         inspection.updated_at = now
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise ConflictException("Já existe um job em fila ou execução para esta inspeção.") from exc
         db.refresh(job)
 
-        self._worker_manager.submit(job.id)
+        try:
+            self._worker_manager.submit(job.id, options=options)
+        except Exception as exc:
+            fail_now = datetime.now(timezone.utc)
+            job.status = "FAILED"
+            job.error_code = "SUBMIT_FAILED"
+            job.error_message = "Falha ao submeter job para a fila de execução."
+            job.finished_at = fail_now
+            inspection.status = "FAILED"
+            inspection.updated_at = fail_now
+            db.commit()
+            raise ConflictException("Não foi possível submeter o processamento neste momento.") from exc
         return job
 
     def get_job_by_id(self, db: Session, job_id: UUID) -> ProcessingJob:

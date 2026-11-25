@@ -49,14 +49,17 @@ def parse_byte_range(range_header: str, content_length: int, max_chunk_bytes: in
         raise InvalidMediaRangeException(content_length)
 
     if not start_raw:
-        suffix_len = int(end_raw)
-        if suffix_len <= 0:
+        raw_suffix_len = int(end_raw)
+        if raw_suffix_len <= 0:
             raise InvalidMediaRangeException(content_length)
-        start = max(0, content_length - suffix_len)
+        suffix_len = min(raw_suffix_len, content_length)
+        bounded_len = min(suffix_len, max_chunk_bytes)
         end = content_length - 1
-    else:
-        start = int(start_raw)
-        end = int(end_raw) if end_raw else (content_length - 1)
+        start = max(0, end - bounded_len + 1)
+        return start, end
+
+    start = int(start_raw)
+    end = int(end_raw) if end_raw else (content_length - 1)
 
     if start < 0 or start >= content_length or start > end:
         raise InvalidMediaRangeException(content_length)
@@ -161,7 +164,16 @@ class LocalMediaStorageService:
         total_size = file_path.stat().st_size
         headers: dict[str, str] = {"Accept-Ranges": "bytes"}
         if download_filename:
-            ascii_fallback = download_filename.encode("ascii", "ignore").decode("ascii") or "download"
+            ascii_fallback = (
+                download_filename.encode("ascii", "ignore")
+                .decode("ascii")
+                .replace('"', "")
+                .replace(";", "")
+                .replace("\r", "")
+                .replace("\n", "")
+                .strip()
+                or "download"
+            )
             headers["Content-Disposition"] = (
                 f'attachment; filename="{ascii_fallback}"; '
                 f"filename*=UTF-8''{quote(download_filename)}"

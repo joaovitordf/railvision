@@ -10,7 +10,7 @@ from app.modules.jobs.schemas import ProcessingJobResponse
 
 
 class InspectionSummaryResponse(CamelModel):
-    """Summary card projection matching Java ApiDtos.InspectionSummaryResponse."""
+    """Summary card projection with additive duration_ms and wagon_count."""
 
     id: UUID
     title: str
@@ -21,18 +21,18 @@ class InspectionSummaryResponse(CamelModel):
     file_size_bytes: int
     sha256_checksum: str
     latest_job_id: UUID | None
+    duration_ms: int | None = None
+    wagon_count: int = 0
     created_at: datetime
     updated_at: datetime
 
 
 class InspectionDetailResponse(InspectionSummaryResponse):
-    """Full inspection detail projection matching Java ApiDtos.InspectionDetailResponse."""
+    """Full inspection detail projection matching frontend InspectionDetail DTO."""
 
-    duration_ms: int | None
     width_px: int | None
     height_px: int | None
     fps: float | None
     codec: str | None
-    wagon_count: int
     review_required_count: int
     latest_job: ProcessingJobResponse | None

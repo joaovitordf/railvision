@@ -45,6 +45,7 @@ class ResultsService:
                     ModelVersion.task == model.task,
                     ModelVersion.name == model.name,
                     ModelVersion.version == model.version,
+                    ModelVersion.runtime == model.runtime,
                 )
             )
             if existing is None:
@@ -62,7 +63,6 @@ class ResultsService:
                     )
                 )
             elif not existing.is_demo_placeholder and not model.demo_placeholder:
-                existing.runtime = model.runtime
                 existing.weights_sha256 = model.weights_sha256
                 existing.artifact_ref = model.artifact_ref
 
@@ -141,10 +141,9 @@ class ResultsService:
         if exists is None:
             raise ResourceNotFoundException(f"Inspeção não encontrada: {inspection_id}")
 
-    def list_wagons_for_inspection(self, db: Session, inspection_id: UUID) -> list[WagonResult]:
-        """List consolidated wagons for the latest completed processing job of an inspection."""
-        self._ensure_inspection_exists(db, inspection_id)
-        completed_job_id = db.scalar(
+    def find_latest_completed_job_id(self, db: Session, inspection_id: UUID) -> UUID | None:
+        """Return latest COMPLETED processing job UUID for an inspection."""
+        return db.scalar(
             sa.select(ProcessingJob.id)
             .where(
                 ProcessingJob.inspection_id == inspection_id,
@@ -153,6 +152,11 @@ class ResultsService:
             .order_by(ProcessingJob.created_at.desc())
             .limit(1)
         )
+
+    def list_wagons_for_inspection(self, db: Session, inspection_id: UUID) -> list[WagonResult]:
+        """List consolidated wagons for the latest completed processing job of an inspection."""
+        self._ensure_inspection_exists(db, inspection_id)
+        completed_job_id = self.find_latest_completed_job_id(db, inspection_id)
         if completed_job_id is None:
             return []
         return list(

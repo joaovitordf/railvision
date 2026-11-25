@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from fractions import Fraction
+import logging
 from pathlib import Path
 import time
 
 import av
+
+logger = logging.getLogger(__name__)
 
 from app.core.exceptions import InvalidMediaException, RuntimeUnavailableException
 from app.modules.media.probe import VideoMetadata, probe_video_metadata
@@ -108,6 +111,25 @@ class VideoPipelineSummary:
     frame_summaries: list[ProcessedFrameSummary]
 
 
+def iter_decoded_video_frames(container: av.container.InputContainer) -> Iterator[av.VideoFrame]:
+    """Decode video stream frames while tolerating zero-size trailing container EOF packets (e.g. Ogg/Theora)."""
+    decoded_count = 0
+    for packet in container.demux(video=0):
+        # Some Ogg/Theora files append a 0-byte timestamped packet at stream end, which makes avcodec_send_packet fail with EINVAL (22).
+        if packet.size == 0 and packet.dts is not None:
+            logger.debug("Ignoring empty timestamped video packet (dts=%s) after %d frames.", packet.dts, decoded_count)
+            continue
+        try:
+            for frame in packet.decode():
+                decoded_count += 1
+                yield frame
+        except (av.error.ArgumentError, av.error.InvalidDataError) as exc:
+            if decoded_count > 0:
+                logger.warning("Ignoring trailing/corrupt video packet after %d decoded frames: %s", decoded_count, exc)
+                continue
+            raise
+
+
 def process_video(
     *,
     input_path: Path,
@@ -119,6 +141,7 @@ def process_video(
     max_frames: int,
     runtime: str | None = None,
     allow_cpu_fallback: bool = False,
+    model_id: str | None = None,
     output_resolution: str = "1080p",
     max_output_height: int = 1080,
     enable_tracking: bool = False,
@@ -142,13 +165,14 @@ def process_video(
     est_sampled = min(est_sampled, max_frames)
 
     out_fps_float = sample_fps if (sample_fps is not None and sample_fps > 0.0) else metadata.fps
-    out_fps_float = max(1.0, min(120.0, float(out_fps_float)))
+    out_fps_float = max(0.5, min(120.0, float(out_fps_float)))
     out_rate = Fraction(max(1, int(round(out_fps_float * 1000))), 1000)
 
     tmp_output_path = run_dir / "annotated.tmp.mp4"
     final_output_path = run_dir / "annotated.mp4"
 
-    tracker = ByteTrackSession(high_thresh=conf_threshold) if enable_tracking else None
+    effective_track_fps = float(sample_fps if (sample_fps is not None and sample_fps > 0.0) else metadata.fps)
+    tracker = ByteTrackSession(high_thresh=conf_threshold, sample_fps=effective_track_fps) if enable_tracking else None
     detector_conf = tracker.candidate_conf_threshold if tracker is not None else conf_threshold
 
     preprocess_times: list[float] = []
@@ -164,8 +188,10 @@ def process_video(
     truncated = False
     sampled_idx = 0
     raw_idx = 0
-    next_sample_ms = 0.0
+    next_sample_ms: float | None = None
     sample_interval_ms = (1000.0 / sample_fps) if (sample_fps is not None and sample_fps > 0.0) else None
+    first_sampled_ts_ms: int | None = None
+    last_out_pts_ms = -1
 
     last_runtime_id = runtime_manager.normalize_runtime_id(runtime)
     last_requested = last_runtime_id
@@ -180,20 +206,24 @@ def process_video(
             in_stream = in_container.streams.video[0]
             with av.open(str(tmp_output_path), mode="w", format="mp4", options={"movflags": "+faststart"}) as out_container:
                 out_stream = out_container.add_stream(encoder_name, rate=out_rate)
+                out_stream.time_base = Fraction(1, 1000)
                 out_stream.width = out_w
                 out_stream.height = out_h
                 out_stream.pix_fmt = "yuv420p"
                 out_stream.options = {"crf": str(DEFAULT_X264_CRF), "preset": DEFAULT_X264_PRESET}
 
-                for frame in in_container.decode(video=0):
+                for frame in iter_decoded_video_frames(in_container):
                     if frame.pts is not None and frame.time_base is not None:
                         frame_ts_ms = max(0, int(round(float(frame.pts * frame.time_base) * 1000.0)))
                     elif in_stream.time_base is not None and frame.pts is not None:
                         frame_ts_ms = max(0, int(round(float(frame.pts * in_stream.time_base) * 1000.0)))
                     else:
                         frame_ts_ms = int(round((raw_idx * 1000.0) / max(1.0, metadata.fps)))
+                    source_frame_idx = raw_idx
                     raw_idx += 1
 
+                    if next_sample_ms is None:
+                        next_sample_ms = float(frame_ts_ms)
                     if sample_interval_ms is not None and (frame_ts_ms + 1.0) < next_sample_ms:
                         continue
                     if sampled_idx >= max_frames:
@@ -212,6 +242,7 @@ def process_video(
                         iou_threshold=iou_threshold,
                         runtime=runtime,
                         allow_cpu_fallback=allow_cpu_fallback,
+                        model_id=model_id,
                     )
                     last_runtime_id = det_result.runtime_id
                     last_requested = det_result.requested_execution_provider
@@ -226,6 +257,11 @@ def process_video(
                             if box.track_id is not None:
                                 unique_tracks.add(box.track_id)
 
+                    if first_sampled_ts_ms is None:
+                        first_sampled_ts_ms = frame_ts_ms
+                    pts_ms = max(last_out_pts_ms + 1, frame_ts_ms - first_sampled_ts_ms)
+                    last_out_pts_ms = pts_ms
+
                     enc_t0 = time.perf_counter()
                     annotated_bgr = render_annotated_frame(
                         bgr,
@@ -234,7 +270,8 @@ def process_video(
                         target_height=out_h,
                     )
                     out_frame = av.VideoFrame.from_ndarray(annotated_bgr, format="bgr24")
-                    out_frame.pts = sampled_idx
+                    out_frame.pts = pts_ms
+                    out_frame.time_base = Fraction(1, 1000)
                     for packet in out_stream.encode(out_frame):
                         out_container.mux(packet)
                     encode_ms = (time.perf_counter() - enc_t0) * 1000.0
@@ -252,7 +289,7 @@ def process_video(
 
                     frame_summaries.append(
                         ProcessedFrameSummary(
-                            frame_index=sampled_idx,
+                            frame_index=source_frame_idx,
                             timestamp_ms=frame_ts_ms,
                             detection_count=len(detections),
                             frame_latency_ms=round(frame_total_ms, 2),

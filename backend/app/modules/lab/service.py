@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 import math
@@ -15,21 +17,29 @@ import time
 from typing import Any
 from uuid import UUID, uuid4
 
+import av
 import cv2
 from fastapi import UploadFile
 import numpy as np
 
 from app.core.config import Settings
 from app.core.exceptions import (
+    ConflictException,
     InvalidMediaException,
     MediaNotFoundException,
     MediaTooLargeException,
     ResourceNotFoundException,
     RuntimeUnavailableException,
 )
+from app.core.paths import REPO_ROOT
 from app.modules.lab.schemas import (
+    CurateFrameRequest,
+    CurationExportDto,
+    FrameComparisonDeltaDto,
     InferenceTimingMetrics,
     ModelConfigUsed,
+    RunComparisonDto,
+    RunComparisonItemDto,
     RunFileLinks,
     RunListItemDto,
     RuntimeStatusDto,
@@ -37,6 +47,7 @@ from app.modules.lab.schemas import (
     VideoRunStatusDto,
 )
 from app.modules.media.probe import probe_video_metadata
+from app.modules.media.validator import matches_container_signature
 from app.modules.vision.renderer import render_annotated_frame
 from app.modules.vision.runtimes import VisionRuntimeManager
 from app.modules.vision.video_pipeline import (
@@ -51,11 +62,25 @@ logger = logging.getLogger(__name__)
 IMAGE_EXTENSIONS = ("bmp", "jpeg", "jpg", "png", "webp")
 VIDEO_EXTENSIONS = ("avi", "mkv", "mov", "mp4", "ogv", "webm")
 MAX_IMAGE_BYTES = 30 * 1024 * 1024
+MAX_IMAGE_PIXELS = 50_000_000
+MAX_CACHED_TERMINAL_RUNS = 20
 EXPLORATORY_NOTICE = (
     "Execução exploratória local no Laboratório de Visão (não altera conjuntos de treino, validação ou teste)."
 )
 TRACKING_DISABLED_STATUS = "NOT_ENABLED_IN_RUN"
 TRACKING_ENABLED_STATUS = "BYTETRACK_ENABLED"
+
+
+def _matches_image_signature(extension: str, header: bytes) -> bool:
+    if extension == "png":
+        return header.startswith(b"\x89PNG\r\n\x1a\n")
+    if extension in {"jpg", "jpeg"}:
+        return len(header) >= 3 and header[:3] == b"\xff\xd8\xff"
+    if extension == "bmp":
+        return header.startswith(b"BM")
+    if extension == "webp":
+        return len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WEBP"
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,12 +166,56 @@ class LabService:
         self._runs_root.mkdir(parents=True, exist_ok=True)
         self._max_video_bytes = settings.upload_max_size_mb * 1024 * 1024
         self._runs_lock = threading.Lock()
-        self._active_video_runs: dict[UUID, VideoRunStatusDto] = {}
+        self._active_video_runs: OrderedDict[UUID, VideoRunStatusDto] = OrderedDict()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="railvision-lab-video")
 
-    def get_runtime_status(self) -> RuntimeStatusDto:
+    def _store_run_in_cache(self, run_id: UUID, dto: VideoRunStatusDto) -> None:
+        with self._runs_lock:
+            self._active_video_runs[run_id] = dto
+            self._active_video_runs.move_to_end(run_id)
+            terminal_keys = [
+                k for k, v in self._active_video_runs.items() if v.status in {"COMPLETED", "FAILED"}
+            ]
+            while len(terminal_keys) > MAX_CACHED_TERMINAL_RUNS:
+                oldest_terminal = terminal_keys.pop(0)
+                self._active_video_runs.pop(oldest_terminal, None)
+
+    def recover_interrupted_runs(self) -> int:
+        """Mark leftover QUEUED/RUNNING disk runs from prior server processes as FAILED."""
+        if not self._runs_root.is_dir():
+            return 0
+        recovered = 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._runs_lock:
+            active_ids = set(self._active_video_runs.keys())
+        for entry in self._runs_root.iterdir():
+            if not entry.is_dir():
+                continue
+            try:
+                run_id = UUID(entry.name)
+            except ValueError:
+                continue
+            if run_id in active_ids:
+                continue
+            result_path = entry / "result.json"
+            if not result_path.is_file():
+                continue
+            try:
+                node = json.loads(result_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if node.get("status") in {"QUEUED", "RUNNING"}:
+                node["status"] = "FAILED"
+                node["completedAt"] = now_iso
+                node["noDetections"] = True
+                node["errorMessage"] = "Execução interrompida pelo encerramento do servidor."
+                self._write_run_json_quietly(entry, node)
+                recovered += 1
+        return recovered
+
+    def get_runtime_status(self, *, model_id: str | None = None) -> RuntimeStatusDto:
         """Return runtime diagnostics, active model metadata, and available Python options."""
-        overview = self._runtime_manager.get_runtime_overview()
+        overview = self._runtime_manager.get_runtime_overview(model_id=model_id)
         default_rt = self._runtime_manager.normalize_runtime_id(self._settings.default_runtime)
         return RuntimeStatusDto(
             available=overview["available"],
@@ -186,6 +255,7 @@ class LabService:
             video_encoder="libx264",
             video_encoder_crf=DEFAULT_X264_CRF,
             tracking_algorithms=["none", "bytetrack"],
+            active_model_id=overview.get("active_model_id"),
         )
 
     def analyze_image(
@@ -196,10 +266,12 @@ class LabService:
         iou: float | None,
         runtime: str | None,
         allow_cpu_fallback: bool = False,
+        model_id: str | None = None,
     ) -> dict[str, Any]:
         """Run synchronous single-image inference and save original + annotated PNG artifacts."""
         runtime_id = self._runtime_manager.normalize_runtime_id(runtime)
-        if runtime_id == "pytorch_cuda" and not allow_cpu_fallback and not self._runtime_manager.get_runtime_overview()["cuda_available"]:
+        meta = self._runtime_manager.resolve_metadata(model_id)
+        if runtime_id == "pytorch_cuda" and not allow_cpu_fallback and not self._runtime_manager.get_runtime_overview(model_id=model_id)["cuda_available"]:
             raise RuntimeUnavailableException(
                 "CUDA não está disponível para o runtime pytorch_cuda. "
                 "Selecione pytorch_cpu/onnx_cpu ou habilite allowCpuFallback=true."
@@ -230,11 +302,23 @@ class LabService:
                 "A imagem excede o limite de 30 MB para o laboratório local.",
                 "Selecione uma imagem válida para análise.",
             )
+            with original_path.open("rb") as handle:
+                header = handle.read(16)
+            if not _matches_image_signature(ext, header):
+                raise InvalidMediaException(
+                    "INVALID_IMAGE_SIGNATURE",
+                    f"O conteúdo do arquivo não corresponde a uma imagem .{ext} válida.",
+                )
             raw_bytes = np.fromfile(str(original_path), dtype=np.uint8)
             bgr = cv2.imdecode(raw_bytes, cv2.IMREAD_COLOR)
             if bgr is None:
                 raise InvalidMediaException("CORRUPT_IMAGE", "Não foi possível decodificar a imagem enviada.")
             img_h, img_w = bgr.shape[:2]
+            if int(img_w) * int(img_h) > MAX_IMAGE_PIXELS:
+                raise InvalidMediaException(
+                    "IMAGE_TOO_LARGE_DIMENSIONS",
+                    "A resolução da imagem excede o limite de segurança de 50 megapixels.",
+                )
 
             wall_t0 = time.perf_counter()
             det_res = self._runtime_manager.detect_bgr(
@@ -243,6 +327,7 @@ class LabService:
                 iou_threshold=iou_val,
                 runtime=runtime_id,
                 allow_cpu_fallback=allow_cpu_fallback,
+                model_id=model_id,
             )
             render_t0 = time.perf_counter()
             annotated = render_annotated_frame(bgr, det_res.detections)
@@ -260,8 +345,7 @@ class LabService:
                 else None
             )
 
-            _, model_sha = self._runtime_manager.model_info_for_runtime(det_res.runtime_id)
-            meta = self._runtime_manager.metadata
+            _, model_sha = self._runtime_manager.model_info_for_runtime(det_res.runtime_id, model_id=model_id)
             metrics = InferenceTimingMetrics(
                 preprocess_ms=round(det_res.preprocess_ms, 2),
                 inference_ms=round(det_res.inference_ms, 2),
@@ -288,15 +372,16 @@ class LabService:
                 tracking_status=TRACKING_DISABLED_STATUS,
                 exploratory_notice=EXPLORATORY_NOTICE,
                 runtime_id=det_res.runtime_id,
+                model_id=meta.model_id,
                 fallback_occurred=det_res.fallback_occurred,
                 output_resolution=None,
                 tracker_algorithm="none",
             )
             files = RunFileLinks(
-                original_url=f"/api/v1/onnx-spike/runs/{run_id}/files/original",
-                annotated_url=f"/api/v1/onnx-spike/runs/{run_id}/files/annotated",
-                original_download_url=f"/api/v1/onnx-spike/runs/{run_id}/files/original?download=true",
-                annotated_download_url=f"/api/v1/onnx-spike/runs/{run_id}/files/annotated?download=true",
+                original_url=f"/api/v1/vision-lab/runs/{run_id}/files/original",
+                annotated_url=f"/api/v1/vision-lab/runs/{run_id}/files/annotated",
+                original_download_url=f"/api/v1/vision-lab/runs/{run_id}/files/original?download=true",
+                annotated_download_url=f"/api/v1/vision-lab/runs/{run_id}/files/annotated?download=true",
                 original_filename=f"original.{ext}",
                 annotated_filename="annotated.png",
                 annotated_content_type="image/png",
@@ -344,10 +429,12 @@ class LabService:
         allow_cpu_fallback: bool = False,
         output_resolution: str = "1080p",
         enable_tracking: bool = False,
+        model_id: str | None = None,
     ) -> VideoRunStatusDto:
         """Validate and enqueue async video inference/tracking returning initial QUEUED status."""
         runtime_id = self._runtime_manager.normalize_runtime_id(runtime)
-        if runtime_id == "pytorch_cuda" and not allow_cpu_fallback and not self._runtime_manager.get_runtime_overview()["cuda_available"]:
+        meta = self._runtime_manager.resolve_metadata(model_id)
+        if runtime_id == "pytorch_cuda" and not allow_cpu_fallback and not self._runtime_manager.get_runtime_overview(model_id=model_id)["cuda_available"]:
             raise RuntimeUnavailableException(
                 "CUDA não está disponível para o runtime pytorch_cuda. "
                 "Selecione pytorch_cpu/onnx_cpu ou habilite allowCpuFallback=true."
@@ -385,13 +472,20 @@ class LabService:
                 f"O vídeo excede o limite de {self._settings.upload_max_size_mb} MB para o laboratório local.",
                 "Selecione um vídeo válido para análise.",
             )
+            with original_path.open("rb") as handle:
+                header = handle.read(16)
+            if not matches_container_signature(ext, header):
+                raise InvalidMediaException(
+                    "INVALID_VIDEO_SIGNATURE",
+                    f"O conteúdo do arquivo não corresponde a um container de vídeo válido para .{ext}.",
+                )
             vid_meta = probe_video_metadata(original_path)
         except (InvalidMediaException, MediaTooLargeException):
             shutil.rmtree(run_dir, ignore_errors=True)
             raise
-        except Exception as exc:
+        except Exception:
             shutil.rmtree(run_dir, ignore_errors=True)
-            raise InvalidMediaException("CORRUPT_VIDEO", f"Não foi possível abrir o vídeo enviado: {exc}") from exc
+            raise InvalidMediaException("CORRUPT_VIDEO", "Não foi possível abrir o vídeo enviado.")
 
         est_sampled = (
             max(1, math.ceil((vid_meta.duration_ms / 1000.0) * fps_val))
@@ -407,9 +501,8 @@ class LabService:
             max_height=self._settings.output_video_max_height,
         )
 
-        rt_option = next(opt for opt in self._runtime_manager.list_runtime_options() if opt.id == runtime_id)
-        _, model_sha = self._runtime_manager.model_info_for_runtime(runtime_id)
-        meta = self._runtime_manager.metadata
+        rt_option = next(opt for opt in self._runtime_manager.list_runtime_options(model_id=model_id) if opt.id == runtime_id)
+        _, model_sha = self._runtime_manager.model_info_for_runtime(runtime_id, model_id=model_id)
 
         model_cfg = ModelConfigUsed(
             model_name=meta.model_name,
@@ -425,6 +518,7 @@ class LabService:
             tracking_status=TRACKING_ENABLED_STATUS if enable_tracking else TRACKING_DISABLED_STATUS,
             exploratory_notice=EXPLORATORY_NOTICE,
             runtime_id=runtime_id,
+            model_id=meta.model_id,
             fallback_occurred=False,
             output_resolution=resolved_res,
             tracker_algorithm="bytetrack" if enable_tracking else "none",
@@ -458,9 +552,9 @@ class LabService:
             metrics=None,
             model_config_used=model_cfg,
             files=RunFileLinks(
-                original_url=f"/api/v1/onnx-spike/runs/{run_id}/files/original",
+                original_url=f"/api/v1/vision-lab/runs/{run_id}/files/original",
                 annotated_url=None,
-                original_download_url=f"/api/v1/onnx-spike/runs/{run_id}/files/original?download=true",
+                original_download_url=f"/api/v1/vision-lab/runs/{run_id}/files/original?download=true",
                 annotated_download_url=None,
                 original_filename=f"original.{ext}",
                 annotated_filename=None,
@@ -475,8 +569,7 @@ class LabService:
             unique_track_count=0 if enable_tracking else None,
         )
 
-        with self._runs_lock:
-            self._active_video_runs[run_id] = initial
+        self._store_run_in_cache(run_id, initial)
         self._write_run_json_quietly(run_dir, initial.model_dump(mode="json", by_alias=True))
 
         self._executor.submit(
@@ -493,6 +586,7 @@ class LabService:
             allow_cpu_fallback,
             resolved_res,
             enable_tracking,
+            model_id,
         )
         return initial
 
@@ -510,6 +604,7 @@ class LabService:
         allow_cpu_fallback: bool,
         output_resolution: str,
         enable_tracking: bool,
+        model_id: str | None = None,
     ) -> None:
         started_at = datetime.now(timezone.utc)
         with self._runs_lock:
@@ -545,6 +640,7 @@ class LabService:
                 max_frames=self._settings.max_video_frames_per_ui_run,
                 runtime=runtime_id,
                 allow_cpu_fallback=allow_cpu_fallback,
+                model_id=model_id,
                 output_resolution=output_resolution,
                 max_output_height=self._settings.output_video_max_height,
                 enable_tracking=enable_tracking,
@@ -583,8 +679,8 @@ class LabService:
                 else None
             )
 
-            _, model_sha = self._runtime_manager.model_info_for_runtime(summary.runtime_id)
-            meta = self._runtime_manager.metadata
+            _, model_sha = self._runtime_manager.model_info_for_runtime(summary.runtime_id, model_id=model_id)
+            meta = self._runtime_manager.resolve_metadata(model_id)
             completed_cfg = ModelConfigUsed(
                 model_name=meta.model_name,
                 source_experiment=meta.source_experiment,
@@ -599,6 +695,7 @@ class LabService:
                 tracking_status=TRACKING_ENABLED_STATUS if summary.tracking_integrated else TRACKING_DISABLED_STATUS,
                 exploratory_notice=EXPLORATORY_NOTICE,
                 runtime_id=summary.runtime_id,
+                model_id=meta.model_id,
                 fallback_occurred=summary.fallback_occurred,
                 output_resolution=summary.output_resolution,
                 tracker_algorithm=summary.tracker_algorithm,
@@ -606,10 +703,10 @@ class LabService:
 
             annotated_name = summary.output_video_path.name
             files = RunFileLinks(
-                original_url=f"/api/v1/onnx-spike/runs/{run_id}/files/original",
-                annotated_url=f"/api/v1/onnx-spike/runs/{run_id}/files/annotated",
-                original_download_url=f"/api/v1/onnx-spike/runs/{run_id}/files/original?download=true",
-                annotated_download_url=f"/api/v1/onnx-spike/runs/{run_id}/files/annotated?download=true",
+                original_url=f"/api/v1/vision-lab/runs/{run_id}/files/original",
+                annotated_url=f"/api/v1/vision-lab/runs/{run_id}/files/annotated",
+                original_download_url=f"/api/v1/vision-lab/runs/{run_id}/files/original?download=true",
+                annotated_download_url=f"/api/v1/vision-lab/runs/{run_id}/files/annotated?download=true",
                 original_filename=f"original.{original_ext}",
                 annotated_filename=annotated_name,
                 annotated_content_type="video/mp4",
@@ -660,6 +757,8 @@ class LabService:
                 model_config_used=completed_cfg,
                 files=files,
                 frame_summaries=frame_dtos,
+                frame_summaries_truncated=len(summary.frame_summaries) > len(summaries_slice),
+                total_frame_summaries=len(summary.frame_summaries),
                 output_resolution=summary.output_resolution,
                 output_width=summary.output_width,
                 output_height=summary.output_height,
@@ -669,23 +768,22 @@ class LabService:
             )
 
             self._write_run_json(run_dir, completed.model_dump(mode="json", by_alias=True))
-            with self._runs_lock:
-                self._active_video_runs[run_id] = completed
-        except Exception as exc:
+            self._store_run_in_cache(run_id, completed)
+        except Exception:
             logger.exception("Falha ao processar vídeo %s no laboratório de visão", run_id)
             with self._runs_lock:
                 cur = self._active_video_runs.get(run_id)
-                if cur is None:
-                    return
-                failed = cur.model_copy(
-                    update={
-                        "status": "FAILED",
-                        "completed_at": datetime.now(timezone.utc),
-                        "error_message": f"Falha ao processar vídeo em PyAV/Visão: {exc}",
-                        "no_detections": True,
-                    }
-                )
-                self._active_video_runs[run_id] = failed
+            if cur is None:
+                return
+            failed = cur.model_copy(
+                update={
+                    "status": "FAILED",
+                    "completed_at": datetime.now(timezone.utc),
+                    "error_message": "Falha interna ao processar o vídeo no Laboratório de Visão.",
+                    "no_detections": True,
+                }
+            )
+            self._store_run_in_cache(run_id, failed)
             self._write_run_json_quietly(run_dir, failed.model_dump(mode="json", by_alias=True))
 
     def list_runs(self) -> list[RunListItemDto]:
@@ -722,6 +820,7 @@ class LabService:
                         device_type=live.model_config_used.device_type,
                         active_execution_provider=live.model_config_used.active_execution_provider,
                         model_name=live.model_config_used.model_name,
+                        model_id=live.model_config_used.model_id,
                         runtime_id=live.model_config_used.runtime_id,
                         tracking_integrated=live.model_config_used.tracking_integrated,
                         unique_track_count=live.unique_track_count,
@@ -754,6 +853,7 @@ class LabService:
                         device_type=str(cfg_node.get("deviceType") or "CPU"),
                         active_execution_provider=str(cfg_node.get("activeExecutionProvider") or "unknown"),
                         model_name=str(cfg_node.get("modelName") or self._runtime_manager.metadata.model_name),
+                        model_id=cfg_node.get("modelId"),
                         runtime_id=cfg_node.get("runtimeId"),
                         tracking_integrated=bool(cfg_node.get("trackingIntegrated", False)),
                         unique_track_count=node.get("uniqueTrackCount"),
@@ -776,6 +876,264 @@ class LabService:
         if not result_path.is_file():
             raise ResourceNotFoundException(f"Execução do laboratório ONNX não encontrada: {run_id}")
         return json.loads(result_path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _to_comparison_item(run_id: UUID, node: dict[str, Any]) -> RunComparisonItemDto:
+        media_type = str(node.get("mediaType") or "IMAGE")
+        cfg = node.get("modelConfig") or {}
+        metrics = node.get("metrics") or {}
+        total_det = int(node.get("totalDetections" if media_type == "VIDEO" else "detectionCount") or 0)
+        if media_type == "VIDEO":
+            src_w, src_h = node.get("videoWidth"), node.get("videoHeight")
+        else:
+            src_w, src_h = node.get("imageWidth"), node.get("imageHeight")
+        source_res = f"{src_w}x{src_h}" if (src_w and src_h) else None
+        return RunComparisonItemDto(
+            run_id=run_id,
+            media_type=media_type,
+            status=str(node.get("status") or "UNKNOWN"),
+            original_filename=str(node.get("originalFilename") or "arquivo"),
+            model_name=str(cfg.get("modelName") or "unknown"),
+            model_id=cfg.get("modelId"),
+            model_sha256=cfg.get("modelSha256"),
+            source_experiment=str(cfg.get("sourceExperiment") or "unknown"),
+            input_size=cfg.get("inputSize"),
+            runtime_id=cfg.get("runtimeId"),
+            device_type=str(cfg.get("deviceType") or "CPU"),
+            conf_threshold=cfg.get("confThreshold"),
+            iou_threshold=cfg.get("iouThreshold"),
+            sample_fps=cfg.get("sampleFps"),
+            source_resolution=source_res,
+            output_resolution=node.get("outputResolution") or cfg.get("outputResolution"),
+            tracking_integrated=bool(cfg.get("trackingIntegrated", False)),
+            total_detections=total_det,
+            unique_track_count=node.get("uniqueTrackCount"),
+            processing_fps=metrics.get("processingFps"),
+            inference_only_fps=metrics.get("inferenceOnlyFps"),
+            avg_frame_ms=metrics.get("avgFrameMs"),
+            p95_frame_ms=metrics.get("p95FrameMs"),
+        )
+
+    def compare_runs(self, run_a_id: UUID, run_b_id: UUID) -> RunComparisonDto:
+        """Compare two completed Vision Lab runs side by side with explicit comparability warnings."""
+        payload_a = self.get_run(run_a_id)
+        payload_b = self.get_run(run_b_id)
+        item_a = self._to_comparison_item(run_a_id, payload_a)
+        item_b = self._to_comparison_item(run_b_id, payload_b)
+
+        if item_a.status != "COMPLETED" or item_b.status != "COMPLETED":
+            raise ConflictException("A comparação A/B requer duas execuções com status COMPLETED.")
+
+        warnings: list[str] = []
+        if run_a_id == run_b_id:
+            warnings.append("Run A e Run B referenciam a mesma execução.")
+        if item_a.media_type != item_b.media_type:
+            warnings.append(f"Tipos de mídia distintos ({item_a.media_type} vs {item_b.media_type}).")
+        if item_a.original_filename != item_b.original_filename:
+            warnings.append(f"Arquivos de entrada diferentes ({item_a.original_filename} vs {item_b.original_filename}).")
+        if item_a.source_resolution != item_b.source_resolution:
+            warnings.append(f"Resoluções de origem distintas ({item_a.source_resolution} vs {item_b.source_resolution}).")
+        if item_a.conf_threshold != item_b.conf_threshold or item_a.iou_threshold != item_b.iou_threshold:
+            warnings.append(
+                f"Limiares diferentes (Run A conf={item_a.conf_threshold}/iou={item_a.iou_threshold} vs "
+                f"Run B conf={item_b.conf_threshold}/iou={item_b.iou_threshold})."
+            )
+        if item_a.input_size != item_b.input_size:
+            warnings.append(f"Resoluções de entrada do modelo distintas ({item_a.input_size} vs {item_b.input_size}).")
+        if item_a.media_type == "VIDEO" and item_b.media_type == "VIDEO":
+            if item_a.sample_fps != item_b.sample_fps:
+                warnings.append(f"Amostragem FPS diferente ({item_a.sample_fps} vs {item_b.sample_fps}).")
+            if item_a.tracking_integrated != item_b.tracking_integrated:
+                warnings.append("Tracking ByteTrack habilitado em apenas uma das execuções.")
+            if item_a.output_resolution != item_b.output_resolution:
+                warnings.append(f"Resolução de saída distinta ({item_a.output_resolution} vs {item_b.output_resolution}).")
+
+        delta_fps = (
+            round(float(item_b.processing_fps) - float(item_a.processing_fps), 2)
+            if (item_a.processing_fps is not None and item_b.processing_fps is not None)
+            else None
+        )
+        delta_avg_ms = (
+            round(float(item_b.avg_frame_ms) - float(item_a.avg_frame_ms), 2)
+            if (item_a.avg_frame_ms is not None and item_b.avg_frame_ms is not None)
+            else None
+        )
+
+        frame_deltas: list[FrameComparisonDeltaDto] = []
+        if item_a.media_type == "VIDEO" and item_b.media_type == "VIDEO":
+            map_a = {int(f["frameIndex"]): f for f in (payload_a.get("frameSummaries") or [])}
+            map_b = {int(f["frameIndex"]): f for f in (payload_b.get("frameSummaries") or [])}
+            common_indices = sorted(set(map_a.keys()) & set(map_b.keys()))[:300]
+            for fidx in common_indices:
+                det_a = int(map_a[fidx].get("detectionCount") or 0)
+                det_b = int(map_b[fidx].get("detectionCount") or 0)
+                ts_ms = int(map_a[fidx].get("timestampMs") or map_b[fidx].get("timestampMs") or 0)
+                frame_deltas.append(
+                    FrameComparisonDeltaDto(
+                        frame_index=fidx,
+                        timestamp_ms=ts_ms,
+                        detections_a=det_a,
+                        detections_b=det_b,
+                        delta=det_b - det_a,
+                    )
+                )
+
+        return RunComparisonDto(
+            run_a=item_a,
+            run_b=item_b,
+            comparable=len(warnings) == 0,
+            comparability_warnings=warnings,
+            delta_detections=item_b.total_detections - item_a.total_detections,
+            delta_processing_fps=delta_fps,
+            delta_avg_frame_ms=delta_avg_ms,
+            frame_deltas=frame_deltas,
+        )
+
+    @staticmethod
+    def _is_reserved_benchmark_media(source_sha256: str, original_filename: str | None) -> bool:
+        reserved_prefixes = ("vid_01", "vid_09", "vid_16")
+        low_name = (original_filename or "").lower()
+        if any(prefix in low_name for prefix in reserved_prefixes):
+            return True
+        pub_manifest = REPO_ROOT / "specs" / "data-manifests" / "public-videos-manifest.json"
+        if pub_manifest.is_file():
+            try:
+                pub_json = json.loads(pub_manifest.read_text(encoding="utf-8"))
+                for rec in pub_json.get("videos") or []:
+                    vid_id = str(rec.get("id") or "").lower()
+                    if any(vid_id.startswith(p) for p in reserved_prefixes):
+                        if str(rec.get("sha256") or "") == source_sha256:
+                            return True
+            except Exception:
+                pass
+        return False
+
+    def curate_frame(self, run_id: UUID, payload: CurateFrameRequest) -> CurationExportDto:
+        """Extract clean unannotated original frame + YOLO pre-annotation into curation-inbox."""
+        reason = payload.reason.strip()
+        if len(reason) < 2:
+            raise InvalidMediaException("INVALID_CURATION_REASON", "Informe um motivo válido para a curadoria.")
+
+        run_data = self.get_run(run_id)
+        original_file = self.load_run_file(run_id, "original")
+        source_sha = hashlib.sha256(original_file.file_path.read_bytes()).hexdigest()
+        media_type = str(run_data.get("mediaType") or "IMAGE")
+        cfg = run_data.get("modelConfig") or {}
+        reserved_warning = self._is_reserved_benchmark_media(source_sha, run_data.get("originalFilename"))
+
+        target_frame_idx = 0
+        timestamp_ms = 0
+        detections: list[dict[str, Any]] = []
+
+        if media_type == "IMAGE":
+            raw_bytes = np.fromfile(str(original_file.file_path), dtype=np.uint8)
+            bgr = cv2.imdecode(raw_bytes, cv2.IMREAD_COLOR)
+            if bgr is None:
+                raise InvalidMediaException("CORRUPT_IMAGE", "Não foi possível ler a imagem original.")
+            detections = list(run_data.get("detections") or [])
+        else:
+            summaries = list(run_data.get("frameSummaries") or [])
+            if payload.frame_index is not None:
+                target_frame_idx = int(payload.frame_index)
+                matched = next((s for s in summaries if int(s.get("frameIndex", -1)) == target_frame_idx), None)
+                if matched is not None:
+                    timestamp_ms = int(matched.get("timestampMs") or 0)
+                    detections = list(matched.get("detections") or [])
+            elif summaries:
+                first_with_det = next((s for s in summaries if int(s.get("detectionCount") or 0) > 0), summaries[0])
+                target_frame_idx = int(first_with_det.get("frameIndex") or 0)
+                timestamp_ms = int(first_with_det.get("timestampMs") or 0)
+                detections = list(first_with_det.get("detections") or [])
+
+            bgr = None
+            with av.open(str(original_file.file_path)) as container:
+                for idx, frame in enumerate(container.decode(video=0)):
+                    if idx == target_frame_idx:
+                        bgr = frame.to_ndarray(format="bgr24")
+                        break
+                    if idx > target_frame_idx:
+                        break
+            if bgr is None:
+                raise ResourceNotFoundException(
+                    f"Frame #{target_frame_idx} não encontrado no vídeo original da execução {run_id}."
+                )
+
+        ok, jpg_bytes = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        if not ok:
+            raise RuntimeError("Falha ao codificar frame limpo JPEG para curadoria.")
+
+        now = datetime.now(timezone.utc)
+        batch_dir = self._settings.curation_inbox_path / now.strftime("%Y-%m-%d")
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        base_stem = f"{str(run_id)[:8]}_f{target_frame_idx:06d}"
+        stem = base_stem
+        if (batch_dir / f"{stem}.jpg").exists():
+            stem = f"{base_stem}_{now.strftime('%H%M%S%f')[:9]}"
+        image_path = batch_dir / f"{stem}.jpg"
+        label_path = batch_dir / f"{stem}.txt"
+        meta_path = batch_dir / f"{stem}.meta.json"
+
+        image_path.write_bytes(jpg_bytes.tobytes())
+        yolo_lines: list[str] = []
+        for det in detections:
+            nx = float(det.get("normX") or 0.0)
+            ny = float(det.get("normY") or 0.0)
+            nw = float(det.get("normWidth") or 0.0)
+            nh = float(det.get("normHeight") or 0.0)
+            cx = max(0.0, min(1.0, nx + nw / 2.0))
+            cy = max(0.0, min(1.0, ny + nh / 2.0))
+            nw = max(0.0, min(1.0, nw))
+            nh = max(0.0, min(1.0, nh))
+            if nw > 0.0 and nh > 0.0:
+                yolo_lines.append(f"0 {cx:.6f} {cy:.6f} {nw:.6f} {nh:.6f}")
+        label_path.write_text("\n".join(yolo_lines) + ("\n" if yolo_lines else ""), encoding="utf-8")
+
+        meta_payload = {
+            "sourceRunId": str(run_id),
+            "sourceFilename": run_data.get("originalFilename"),
+            "sourceSha256": source_sha,
+            "mediaType": media_type,
+            "frameIndex": target_frame_idx,
+            "timestampMs": timestamp_ms,
+            "modelId": cfg.get("modelId"),
+            "modelName": cfg.get("modelName"),
+            "modelSha256": cfg.get("modelSha256"),
+            "sourceExperiment": cfg.get("sourceExperiment"),
+            "confThreshold": cfg.get("confThreshold"),
+            "iouThreshold": cfg.get("iouThreshold"),
+            "reason": reason,
+            "notes": payload.notes,
+            "targetCampaign": payload.target_campaign,
+            "classNames": {"0": "open_top_freight_wagon"},
+            "detectionCount": len(yolo_lines),
+            "reservedBenchmarkWarning": reserved_warning,
+            "humanReviewed": False,
+            "autoTrainEligible": False,
+            "exportedAt": now.isoformat(),
+        }
+        meta_path.write_text(json.dumps(meta_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        def _rel(path: Path) -> str:
+            try:
+                return path.resolve().relative_to(REPO_ROOT).as_posix()
+            except ValueError:
+                return str(path)
+
+        return CurationExportDto(
+            run_id=run_id,
+            frame_index=target_frame_idx,
+            image_path=_rel(image_path),
+            label_path=_rel(label_path),
+            metadata_path=_rel(meta_path),
+            source_sha256=source_sha,
+            model_sha256=cfg.get("modelSha256"),
+            reserved_benchmark_warning=reserved_warning,
+            detection_count=len(yolo_lines),
+            reason=reason,
+            human_reviewed=False,
+            auto_train_eligible=False,
+            created_at=now,
+        )
 
     def load_run_file(self, run_id: UUID, kind: str) -> StoredRunFile:
         """Resolve original or annotated artifact inside a run directory."""

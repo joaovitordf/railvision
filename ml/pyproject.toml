@@ -1,7 +1,7 @@
 [project]
 name = "railvision-ml"
-version = "0.1.0"
-description = "Offline dataset audit, training, evaluation, and ONNX export tooling for RailVision AI."
+version = "0.2.0"
+description = "Offline dataset audit, training, evaluation, pre-annotation, and ONNX export tooling for RailVision AI."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = []
@@ -18,7 +18,7 @@ train = [
     "lap==0.5.14",
     "matplotlib==3.11.2",
     "nvidia-ml-py==13.615.71",
-    "opencv-python==5.1.0.95",
+    "opencv-python-headless==5.1.0.95",
     "torch==2.9.1+cu128",
     "torchvision==0.24.1+cu128",
     "ultralytics==8.4.215",
@@ -26,6 +26,9 @@ train = [
 onnx = [
     "onnx==1.23.2",
     "onnxruntime==1.32.0",
+]
+preannotate = [
+    "clip @ git+https://github.com/ultralytics/CLIP.git",
 ]
 backend = [
     "alembic==1.20.1",

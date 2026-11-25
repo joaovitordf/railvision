@@ -357,12 +357,120 @@ def ingest_full(root: Path, manifest: dict[str, Any], det_export_dir: Path, mot_
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 
+def ingest_generalized_pack(
+    *,
+    manifest: dict[str, Any],
+    packs_dir: Path | str,
+    det_export_dir: Path | str,
+    output_dir: Path | str,
+    confirm_human_reviewed: bool,
+) -> dict[str, Any]:
+    """Validate and ingest a generalized HITL-reviewed CVAT YOLO detection export into a target dataset root."""
+    packs_dir = Path(packs_dir)
+    det_export_dir = Path(det_export_dir)
+    output_dir = Path(output_dir)
+    if not confirm_human_reviewed:
+        raise PermissionError(
+            "Ingestão bloqueada: passe --confirm-human-reviewed após revisão humana de 100% das anotações no CVAT."
+        )
+
+    prov_path = det_export_dir / "preannotation_provenance.json" if det_export_dir.is_dir() else None
+    if prov_path and prov_path.is_file():
+        prov = json.loads(prov_path.read_text(encoding="utf-8"))
+        if prov.get("humanReviewed") is False:
+            raise PermissionError(
+                f"Arquivo {prov_path} marca humanReviewed=false. Confirme a revisão humana antes da ingestão."
+            )
+
+    pack_manifest_path = packs_dir / "pack_manifest.json"
+    if not pack_manifest_path.is_file():
+        raise FileNotFoundError(f"pack_manifest.json não encontrado em {packs_dir}")
+    pack = json.loads(pack_manifest_path.read_text(encoding="utf-8"))
+    frames = list(pack.get("frames") or [])
+    if not frames:
+        raise ValueError("pack_manifest.json não possui frames para ingestão.")
+
+    expected_filenames: set[str] = set()
+    campaign_by_split: dict[str, set[str]] = defaultdict(set)
+    reserved = ("vid_01", "vid_09", "vid_16")
+    for rec in frames:
+        split = str(rec.get("split") or "")
+        vid_id = str(rec.get("video_id") or "")
+        campaign = str(rec.get("campaign_id") or "")
+        fname = str(rec.get("filename") or "")
+        if split in ("train", "val"):
+            if any(vid_id.lower().startswith(r) or r in fname.lower() for r in reserved):
+                raise ValueError(f"Isolamento violado: vídeo reservado '{vid_id}' proibido em split '{split}'.")
+        if campaign and split:
+            campaign_by_split[split].add(campaign)
+        if fname:
+            expected_filenames.add(fname)
+
+    # Include manifest cross-split campaign checks if supplied
+    for rec in manifest.get("videos") or []:
+        sp = str(rec.get("target_split") or rec.get("split") or "")
+        cp = str(rec.get("campaign_id") or "")
+        if cp and sp:
+            campaign_by_split[sp].add(cp)
+
+    for a, b in (("train", "val"), ("train", "test"), ("val", "test"), ("train", "test_negative_only"), ("val", "test_negative_only")):
+        if not campaign_by_split[a].isdisjoint(campaign_by_split[b]):
+            overlap = sorted(campaign_by_split[a] & campaign_by_split[b])
+            raise ValueError(f"Vazamento de campanha entre splits {a}/{b}: {overlap}")
+
+    with resolved_export_dir(det_export_dir) as resolved_det:
+        det_res = _validate_yolo_detection_folder(resolved_det, expected_filenames, smoke_mode=False)
+        ingested = 0
+        empty_labels = 0
+        for rec in frames:
+            sp = str(rec.get("split") or "train")
+            fname = str(rec["filename"])
+            src_img = packs_dir / fname
+            if not src_img.is_file():
+                raise FileNotFoundError(f"Frame ausente no pack: {src_img}")
+            dst_img = output_dir / sp / "images" / fname
+            dst_lbl = output_dir / sp / "labels" / f"{Path(fname).stem}.txt"
+            dst_img.parent.mkdir(parents=True, exist_ok=True)
+            dst_lbl.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_img, dst_img)
+            stem = Path(fname).stem
+            if stem in det_res["label_paths"]:
+                shutil.copy2(det_res["label_paths"][stem], dst_lbl)
+            else:
+                empty_labels += 1
+                dst_lbl.write_text("", encoding="utf-8")
+            ingested += 1
+
+    data_yaml = "\n".join(
+        [
+            f"path: {output_dir.resolve()}",
+            "train: train/images",
+            "val: val/images",
+            "test: test/images",
+            "names:",
+            "  0: open_top_freight_wagon",
+            "",
+        ]
+    )
+    (output_dir / "data.yaml").write_text(data_yaml, encoding="utf-8")
+    return {
+        "ingested_frames": ingested,
+        "empty_labels_written": empty_labels,
+        "output_dir": str(output_dir),
+        "detection_validation": {k: v for k, v in det_res.items() if k not in ("label_paths", "boxes_by_stem")},
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", required=True, choices=["smoke-detection", "smoke-tracking", "ingest-full"])
+    parser.add_argument("--mode", required=True, choices=["smoke-detection", "smoke-tracking", "ingest-full", "ingest-pack"])
     parser.add_argument("--export-dir", help="CVAT Ultralytics YOLO export directory or .zip (smoke-detection)")
-    parser.add_argument("--det-export-dir", help="CVAT Ultralytics YOLO export directory or .zip (ingest-full)")
+    parser.add_argument("--det-export-dir", help="CVAT Ultralytics YOLO export directory or .zip (ingest-full / ingest-pack)")
     parser.add_argument("--mot-file", help="Path to CVAT MOT 1.1 gt.txt or .zip archive")
+    parser.add_argument("--manifest", type=Path, default=None, help="Optional video manifest JSON for generalized pack ingestion")
+    parser.add_argument("--packs-dir", type=Path, default=None, help="Directory with pack_manifest.json and clean frames")
+    parser.add_argument("--output-dir", type=Path, default=None, help="Target YOLO dataset directory for ingest-pack")
+    parser.add_argument("--confirm-human-reviewed", action="store_true", help="Explicit confirmation that 100% of labels were human-reviewed in CVAT")
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[2]
@@ -381,9 +489,23 @@ def main() -> None:
         expected_n = int(manifest["smoke_test"]["tracking_num_frames"])
         res = validate_mot_tracking_export(Path(args.mot_file), expected_num_frames=expected_n, img_w=1920, img_h=1080)
         print(json.dumps({k: v for k, v in res.items() if k != "rows_by_frame"}, indent=2, ensure_ascii=False))
+    elif args.mode == "ingest-pack":
+        if not args.det_export_dir or not args.packs_dir or not args.output_dir:
+            raise ValueError("--det-export-dir, --packs-dir, and --output-dir are required for --mode ingest-pack")
+        custom_manifest = json.loads(args.manifest.read_text(encoding="utf-8")) if args.manifest else manifest
+        summary = ingest_generalized_pack(
+            manifest=custom_manifest,
+            packs_dir=Path(args.packs_dir),
+            det_export_dir=Path(args.det_export_dir),
+            output_dir=Path(args.output_dir),
+            confirm_human_reviewed=args.confirm_human_reviewed,
+        )
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
     else:
         if not args.det_export_dir or not args.mot_file:
             raise ValueError("--det-export-dir and --mot-file are required for --mode ingest-full")
+        if not args.confirm_human_reviewed:
+            raise PermissionError("Ingestão bloqueada: --confirm-human-reviewed é obrigatório após revisão humana 100% no CVAT.")
         ingest_full(root, manifest, Path(args.det_export_dir), Path(args.mot_file))
 
 

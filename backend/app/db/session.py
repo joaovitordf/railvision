@@ -3,6 +3,7 @@
 from collections.abc import Generator
 from functools import lru_cache
 import re
+from typing import Any
 
 from fastapi import Request
 from sqlalchemy import Engine, create_engine
@@ -21,7 +22,7 @@ def create_db_engine(
 ) -> Engine:
     """Create a SQLAlchemy engine for PostgreSQL, optionally pinned to an isolated schema."""
     url = database_url or get_settings().database_url
-    connect_args: dict[str, str] = {}
+    connect_args: dict[str, Any] = {"connect_timeout": 2}
     if schema is not None:
         if not _SAFE_SCHEMA_RE.match(schema):
             raise ValueError(f"Invalid PostgreSQL schema identifier: {schema!r}")

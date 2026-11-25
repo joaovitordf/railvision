@@ -7,12 +7,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 import os
+import threading
 from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.exceptions import InvalidMediaException, RuntimeUnavailableException
 from app.db.models import Inspection, ProcessingJob
 from app.modules.jobs.engine import InferenceOutput, InferenceRequest, InspectionInferenceEngine
+from app.modules.jobs.schemas import ProcessInspectionRequest
 from app.modules.media.storage import LocalMediaStorageService
 from app.modules.results.service import ResultsService
 
@@ -54,9 +57,14 @@ class JobExecutionManager:
             max_workers=max(1, int(max_concurrency)),
             thread_name_prefix="railvision-job-worker",
         )
+        self._options_lock = threading.Lock()
+        self._job_options: dict[UUID, ProcessInspectionRequest] = {}
 
-    def submit(self, job_id: UUID) -> None:
+    def submit(self, job_id: UUID, options: ProcessInspectionRequest | None = None) -> None:
         """Schedule a queued job on the managed worker pool."""
+        if options is not None:
+            with self._options_lock:
+                self._job_options[job_id] = options
         self._executor.submit(self.execute_job, job_id)
 
     def execute_job(self, job_id: UUID) -> None:
@@ -80,12 +88,31 @@ class JobExecutionManager:
                 self._inference_engine.engine_name,
                 self._inference_engine.is_demo_simulation,
             )
+            last_reported = 15
+
+            def _on_progress(pct: int) -> None:
+                nonlocal last_reported
+                bounded = max(15, min(95, int(pct)))
+                if bounded - last_reported >= 5:
+                    last_reported = bounded
+                    self._update_progress(job_id, bounded)
+
+            with self._options_lock:
+                job_opts = self._job_options.pop(job_id, None)
+
             output = self._inference_engine.analyze(
                 InferenceRequest(
                     inspection_id=context.inspection_id,
                     job_id=job_id,
                     video_path=video_path,
                     content_type=context.content_type,
+                    progress_cb=_on_progress,
+                    model_id=job_opts.model_id if job_opts else None,
+                    runtime=job_opts.runtime if job_opts else None,
+                    allow_cpu_fallback=bool(job_opts.allow_cpu_fallback) if job_opts else False,
+                    conf_threshold=job_opts.conf_threshold if job_opts else None,
+                    iou_threshold=job_opts.iou_threshold if job_opts else None,
+                    sample_fps=job_opts.sample_fps if job_opts else None,
                 )
             )
             self._mark_completed(job_id, context.inspection_id, output)
@@ -95,6 +122,22 @@ class JobExecutionManager:
                 context.inspection_id,
                 len(output.wagons),
             )
+        except RuntimeUnavailableException as exc:
+            logger.warning(
+                "Runtime unavailable jobId=%s inspectionId=%s detail=%s",
+                job_id,
+                context.inspection_id,
+                exc.detail,
+            )
+            self._mark_failed(job_id, context.inspection_id, "RUNTIME_UNAVAILABLE", exc.detail)
+        except InvalidMediaException as exc:
+            logger.warning(
+                "Invalid media during processing jobId=%s inspectionId=%s code=%s",
+                job_id,
+                context.inspection_id,
+                exc.error_code,
+            )
+            self._mark_failed(job_id, context.inspection_id, exc.error_code or "INVALID_MEDIA", exc.detail)
         except ProcessingFailureError as exc:
             logger.warning(
                 "Processing failed jobId=%s inspectionId=%s code=%s",
@@ -137,6 +180,13 @@ class JobExecutionManager:
                 stored_filename=inspection.stored_filename,
                 content_type=inspection.content_type,
             )
+
+    def _update_progress(self, job_id: UUID, progress_percent: int) -> None:
+        with self._session_factory() as db:
+            job = db.get(ProcessingJob, job_id)
+            if job is not None and job.status == "RUNNING":
+                job.progress_percent = progress_percent
+                db.commit()
 
     def _mark_completed(self, job_id: UUID, inspection_id: UUID, output: InferenceOutput) -> None:
         with self._session_factory() as db:

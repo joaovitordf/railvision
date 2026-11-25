@@ -186,8 +186,10 @@ def test_orm_metadata_matches_flyway_v1_contract() -> None:
 
     all_index_names = {idx.name for table in Base.metadata.tables.values() for idx in table.indexes}
     assert all_index_names == {
+        "idx_inspections_created_at_desc",
         "idx_processing_jobs_inspection_created",
         "idx_processing_jobs_status",
+        "uq_processing_jobs_one_active_per_inspection",
         "idx_wagon_results_inspection_job_seq",
         "idx_wagon_observations_result_ts",
     }
@@ -198,22 +200,22 @@ def test_orm_metadata_matches_flyway_v1_contract() -> None:
         for c in table.constraints
         if isinstance(c, sa.UniqueConstraint)
     }
-    assert {"inspections_stored_filename_key", "uq_model_versions_task_name_version"} <= uq_names
+    assert {"inspections_stored_filename_key", "uq_model_versions_task_name_version_runtime"} <= uq_names
 
 
 def test_fastapi_health_and_cors() -> None:
     """FastAPI create_app exposes GET /health and configured CORS headers."""
     app = create_app(get_settings(), enable_startup_recovery=False)
-    client = TestClient(app)
+    with TestClient(app) as client:
+        response = client.get("/health", headers={"Origin": "http://localhost:4200"})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "ok"
+        assert body["backend"] == "python-fastapi"
+        assert response.headers.get("access-control-allow-origin") == "http://localhost:4200"
 
-    response = client.get("/health", headers={"Origin": "http://localhost:4200"})
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "ok"
-    assert body["backend"] == "python-fastapi"
-    assert response.headers.get("access-control-allow-origin") == "http://localhost:4200"
 
-
+@pytest.mark.gpu
 def test_cuda_and_pyav_4k_decode_plus_h264_encoder_probe() -> None:
     """CUDA runtime stays intact and PyAV decodes 4K VP9 vid_01 with H.264 encoders available."""
     assert torch.cuda.is_available()
@@ -238,6 +240,7 @@ def test_cuda_and_pyav_4k_decode_plus_h264_encoder_probe() -> None:
         assert rgb.shape == (2160, 3840, 3)
 
 
+@pytest.mark.integration
 def test_postgresql_readonly_public_and_isolated_alembic_roundtrip() -> None:
     """Inspect public schema read-only without changes, then test Alembic upgrade/downgrade in temp schema."""
     settings = get_settings()
@@ -277,8 +280,10 @@ def test_postgresql_readonly_public_and_isolated_alembic_roundtrip() -> None:
                 for idx in inspector.get_indexes(table_name, schema=temp_schema)
             }
             assert {
+                "idx_inspections_created_at_desc",
                 "idx_processing_jobs_inspection_created",
                 "idx_processing_jobs_status",
+                "uq_processing_jobs_one_active_per_inspection",
                 "idx_wagon_results_inspection_job_seq",
                 "idx_wagon_observations_result_ts",
             } <= migrated_indexes

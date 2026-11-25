@@ -1,6 +1,7 @@
 @import './styles/tokens.css';
 @import './styles/shell.css';
 @import './styles/ui.css';
+@import './styles/studio.css';
 
 *,
 *::before,
@@ -12,7 +13,21 @@ html,
 body {
   height: 100%;
   margin: 0;
-  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   background-color: var(--rv-bg-app);
   color: var(--rv-text-primary);
+}
+
+mat-icon.mat-icon {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+  line-height: 18px;
+  overflow: hidden;
+  flex-shrink: 0;
+  user-select: none;
 }

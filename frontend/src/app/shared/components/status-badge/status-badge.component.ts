@@ -7,8 +7,9 @@ type AnyStatus = InspectionStatus | JobStatus | string;
   selector: 'rv-status-badge',
   standalone: true,
   template: `
-    <span class="rv-badge" [class]="badgeClass()">
-      {{ label() }}
+    <span [class]="'rv-badge ' + badgeClass()">
+      <span class="rv-badge__dot" aria-hidden="true"></span>
+      <span>{{ label() }}</span>
     </span>
   `,
 })

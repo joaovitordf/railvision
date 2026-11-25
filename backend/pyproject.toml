@@ -1,7 +1,7 @@
 [project]
 name = "railvision-backend"
-version = "0.1.0"
-description = "FastAPI backend for RailVision AI (Stage M0 incremental migration)."
+version = "0.4.0"
+description = "Unified FastAPI backend for RailVision AI."
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic==1.20.1",
@@ -23,3 +23,8 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "unit: Fast isolated unit tests without GPU or external PostgreSQL dependencies.",
+    "integration: Integration tests requiring PostgreSQL Docker container or full video processing.",
+    "gpu: Tests requiring NVIDIA CUDA GPU hardware and local raw media/weights.",
+]

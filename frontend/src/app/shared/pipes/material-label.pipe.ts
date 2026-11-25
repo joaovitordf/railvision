@@ -15,8 +15,11 @@ const LABELS: Record<string, string> = {
   standalone: true,
 })
 export class MaterialLabelPipe implements PipeTransform {
-  transform(materialClass: string | null | undefined): string {
+  transform(materialClass: string | null | undefined, loadingLevel?: string | null): string {
     if (materialClass == null || materialClass === '') {
+      if (loadingLevel && loadingLevel !== 'empty') {
+        return 'Não avaliado';
+      }
       return 'N/A (vagão vazio)';
     }
     return LABELS[materialClass] ?? materialClass;

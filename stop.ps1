@@ -20,7 +20,7 @@ function Write-Warn([string]$Message) {
     Write-Host "[RailVision] $Message" -ForegroundColor Yellow
 }
 
-function Stop-ProcessTree([int]$TargetPid, [string]$Label) {
+function Stop-ProcessTree([int]$TargetPid, [string]$Label, [string]$ExpectedPattern = '') {
     if ($TargetPid -le 0) {
         return
     }
@@ -29,9 +29,27 @@ function Stop-ProcessTree([int]$TargetPid, [string]$Label) {
         Write-Info "$Label (PID $TargetPid) ja nao estava em execucao."
         return
     }
-    Write-Info "Encerrando $Label (arvore de processos PID $TargetPid)..."
+    if ($ExpectedPattern) {
+        $cim = Get-CimInstance Win32_Process -Filter "ProcessId = $TargetPid" -ErrorAction SilentlyContinue
+        $cmdLine = if ($cim -and $cim.CommandLine) { $cim.CommandLine } else { '' }
+        if ($cmdLine -and -not ($cmdLine -match $ExpectedPattern)) {
+            Write-Warn "PID $TargetPid nao corresponde a '$ExpectedPattern' (possivel reuso de PID); ignorado."
+            return
+        }
+    }
+    Write-Info "Encerrando $Label graciosamente (PID $TargetPid)..."
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
+    & cmd.exe /c "taskkill /PID $TargetPid >nul 2>&1"
+    for ($i = 0; $i -lt 16; $i++) {
+        Start-Sleep -Milliseconds 250
+        if (-not (Get-Process -Id $TargetPid -ErrorAction SilentlyContinue)) {
+            $ErrorActionPreference = $prev
+            Write-Ok "$Label encerrado."
+            return
+        }
+    }
+    Write-Info "Forcando encerramento da arvore de processos de $Label (PID $TargetPid)..."
     & cmd.exe /c "taskkill /PID $TargetPid /T /F >nul 2>&1"
     $ErrorActionPreference = $prev
     Start-Sleep -Milliseconds 300
@@ -74,10 +92,10 @@ if (Test-Path $PidsFile) {
         if ($state.backendPort) { $backendPort = [int]$state.backendPort }
 
         if ($state.frontendPid) {
-            Stop-ProcessTree -TargetPid ([int]$state.frontendPid) -Label 'Frontend Angular'
+            Stop-ProcessTree -TargetPid ([int]$state.frontendPid) -Label 'Frontend Angular' -ExpectedPattern 'ng|node|npm|frontend'
         }
         if ($state.backendPid) {
-            Stop-ProcessTree -TargetPid ([int]$state.backendPid) -Label 'Backend FastAPI'
+            Stop-ProcessTree -TargetPid ([int]$state.backendPid) -Label 'Backend FastAPI' -ExpectedPattern 'uvicorn|app\.main|python'
         }
     } catch {
         Write-Warn "Nao foi possivel ler pids.json; verificando portas configuradas."

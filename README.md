@@ -11,10 +11,10 @@ Sistema local de visão computacional para monitoramento ferroviário em vagões
 
 ```text
 railvision/
-├── frontend/             # Aplicação web Angular 22 (standalone + Angular Material)
+├── frontend/             # Aplicação web Angular 22 (Visão geral, Inspeções, Anotações Studio e Laboratório/Treinamento)
 ├── backend/              # Backend único Python 3.12 + FastAPI + SQLAlchemy 2.0 + Alembic + PyAV + Visão CUDA/ONNX
-├── ml/                   # Ferramental offline (venv compartilhado ml/.venv, auditoria, treino, avaliação, export ONNX)
-├── specs/                # Documentação SDD, contratos OpenAPI, ADRs (ADR-0001..ADR-0003), relatórios e log de migração
+├── ml/                   # Ferramental offline (venv compartilhado ml/.venv, auditoria, pré-anotação, treino, avaliação, export ONNX)
+├── specs/                # Documentação SDD, contratos OpenAPI, ADRs (ADR-0001..ADR-0006), relatórios e manifestos de dados
 ├── data/                 # [LOCAL / IGNORADO PELO GIT] Vídeos, datasets brutos e armazenamentos locais
 ├── artifacts/            # [LOCAL / IGNORADO PELO GIT] Checkpoints (.pt), modelos (.onnx) e logs de execução
 ├── docker-compose.yml    # Serviço local PostgreSQL 17
@@ -127,4 +127,4 @@ npm --prefix frontend test -- --watch=false
 
 - As pastas `data/` e `artifacts/`, assim como arquivos de vídeo, datasets, pesos (`.pt`, `.onnx`, `.ckpt`) e o arquivo `.env`, são **ignorados pelo Git**.
 - Caso deseje preservar vídeos enviados em `data/processed/app-storage/`, execuções do laboratório em `data/processed/onnx-spike-runs/`, datasets ou modelos treinados, faça backup manual dessas pastas locais.
-- Consulte `specs/` para a especificação técnica completa, ADRs (`ADR-0001` a `ADR-0003`), histórico da migração (`specs/migration/fastapi-migration-log.md`) e auditoria de dados.
+- Consulte `specs/` para a especificação técnica completa, ADRs (`ADR-0001` a `ADR-0006`), plano de interface (`specs/ui-redesign-sdd.md`), histórico da migração (`specs/migration/fastapi-migration-log.md`) e auditoria de dados.

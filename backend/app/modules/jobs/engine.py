@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
+import math
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING
@@ -27,6 +29,13 @@ class InferenceRequest:
     job_id: UUID
     video_path: Path
     content_type: str
+    progress_cb: Callable[[int], None] | None = None
+    model_id: str | None = None
+    runtime: str | None = None
+    allow_cpu_fallback: bool = False
+    conf_threshold: float | None = None
+    iou_threshold: float | None = None
+    sample_fps: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,12 +272,13 @@ class VisionInspectionInferenceEngine(InspectionInferenceEngine):
     def is_demo_simulation(self) -> bool:
         return False
 
-    def build_active_model_descriptors(self) -> list[ModelVersionDraft]:
+    def build_active_model_descriptors(self, *, model_id: str | None = None, runtime: str | None = None) -> list[ModelVersionDraft]:
         """Return real non-placeholder model descriptors for detector and tracker."""
-        meta = self._runtime_manager.metadata
-        overview = self._runtime_manager.get_runtime_overview()
-        display_path, model_sha = self._runtime_manager.model_info_for_runtime(self._runtime_id)
-        active_provider = str(overview.get("active_execution_provider") or self._runtime_id)
+        rt_id = self._runtime_manager.normalize_runtime_id(runtime or self._runtime_id)
+        meta = self._runtime_manager.resolve_metadata(model_id)
+        overview = self._runtime_manager.get_runtime_overview(model_id=model_id)
+        display_path, model_sha = self._runtime_manager.model_info_for_runtime(rt_id, model_id=model_id)
+        active_provider = str(overview.get("active_execution_provider") or rt_id)
         return [
             ModelVersionDraft(
                 task="detector",
@@ -294,36 +304,64 @@ class VisionInspectionInferenceEngine(InspectionInferenceEngine):
         """Decode video via PyAV, detect wagons, associate ByteTrack IDs, and consolidate honest observations."""
         from app.modules.media.probe import probe_video_metadata
         from app.modules.vision.tracker import ByteTrackSession
+        from app.modules.vision.video_pipeline import iter_decoded_video_frames
 
         metadata = probe_video_metadata(request.video_path)
-        tracker = ByteTrackSession(high_thresh=self._settings.default_confidence_threshold)
+        sample_fps = max(0.5, float(request.sample_fps)) if request.sample_fps is not None else self._sample_fps
+        high_conf = (
+            max(0.01, min(0.99, float(request.conf_threshold)))
+            if request.conf_threshold is not None
+            else self._settings.default_confidence_threshold
+        )
+        iou_threshold = (
+            max(0.05, min(0.95, float(request.iou_threshold)))
+            if request.iou_threshold is not None
+            else self._settings.default_iou_threshold
+        )
+        runtime_id = self._runtime_manager.normalize_runtime_id(request.runtime or self._runtime_id)
+        tracker = ByteTrackSession(
+            high_thresh=high_conf,
+            sample_fps=sample_fps,
+        )
         detector_conf = tracker.candidate_conf_threshold
-        iou_threshold = self._settings.default_iou_threshold
         max_frames = max(1, int(self._settings.max_video_frames_per_ui_run))
+        min_obs = max(1, int(getattr(self._settings, "min_track_observations", 2)))
+
+        est_sampled = (
+            max(1, math.ceil((metadata.duration_ms / 1000.0) * sample_fps))
+            if metadata.duration_ms > 0
+            else max(1, metadata.estimated_frames)
+        )
+        est_sampled = min(est_sampled, max_frames)
 
         grouped_observations: dict[int, list[tuple[int, int, DetectionBox]]] = defaultdict(list)
         ordered_track_ids: list[int] = []
         active_provider: str | None = None
 
-        sample_interval_ms = 1000.0 / self._sample_fps
-        next_sample_ms = 0.0
+        sample_interval_ms = 1000.0 / sample_fps
+        next_sample_ms: float | None = None
         raw_idx = 0
         sampled_idx = 0
+        truncated_by_frame_limit = False
 
         with av.open(str(request.video_path)) as container:
             in_stream = container.streams.video[0]
-            for frame in container.decode(video=0):
+            for frame in iter_decoded_video_frames(container):
                 if frame.pts is not None and frame.time_base is not None:
                     frame_ts_ms = max(0, int(round(float(frame.pts * frame.time_base) * 1000.0)))
                 elif in_stream.time_base is not None and frame.pts is not None:
                     frame_ts_ms = max(0, int(round(float(frame.pts * in_stream.time_base) * 1000.0)))
                 else:
                     frame_ts_ms = int(round((raw_idx * 1000.0) / max(1.0, metadata.fps)))
+                source_frame_idx = raw_idx
                 raw_idx += 1
 
+                if next_sample_ms is None:
+                    next_sample_ms = float(frame_ts_ms)
                 if (frame_ts_ms + 1.0) < next_sample_ms:
                     continue
                 if sampled_idx >= max_frames:
+                    truncated_by_frame_limit = True
                     break
                 while next_sample_ms <= (frame_ts_ms + 1.0):
                     next_sample_ms += sample_interval_ms
@@ -333,8 +371,9 @@ class VisionInspectionInferenceEngine(InspectionInferenceEngine):
                     bgr,
                     conf_threshold=detector_conf,
                     iou_threshold=iou_threshold,
-                    runtime=self._runtime_id,
-                    allow_cpu_fallback=False,
+                    runtime=runtime_id,
+                    allow_cpu_fallback=request.allow_cpu_fallback,
+                    model_id=request.model_id,
                 )
                 active_provider = det_res.active_execution_provider
                 tracked = tracker.update(det_res.detections)
@@ -344,11 +383,14 @@ class VisionInspectionInferenceEngine(InspectionInferenceEngine):
                     tid = int(box.track_id)
                     if tid not in grouped_observations:
                         ordered_track_ids.append(tid)
-                    grouped_observations[tid].append((sampled_idx, frame_ts_ms, box))
+                    grouped_observations[tid].append((source_frame_idx, frame_ts_ms, box))
 
                 sampled_idx += 1
+                if request.progress_cb is not None:
+                    pct = 15 + int(round((sampled_idx / max(est_sampled, sampled_idx)) * 80.0))
+                    request.progress_cb(min(95, max(15, pct)))
 
-        models = self.build_active_model_descriptors()
+        models = self.build_active_model_descriptors(model_id=request.model_id, runtime=runtime_id)
         if active_provider is not None:
             detector_desc = models[0]
             models[0] = ModelVersionDraft(
@@ -361,14 +403,36 @@ class VisionInspectionInferenceEngine(InspectionInferenceEngine):
                 demo_placeholder=False,
             )
 
-        meta = self._runtime_manager.metadata
+        meta = self._runtime_manager.resolve_metadata(request.model_id)
         model_map = {
             "detector": f"{meta.model_name}@{meta.source_experiment}",
             "tracker": f"bytetrack@ultralytics-{ultralytics.__version__}",
         }
+        detector_flag = (
+            "poc_detector_exp04c"
+            if "exp04c" in meta.source_experiment.lower()
+            else f"detector_{meta.source_experiment}"
+        )
+        base_quality_flags = [
+            detector_flag,
+            "material_not_evaluated",
+            "loading_not_evaluated",
+        ]
+        base_review_reasons = [
+            f"{detector_flag}_unapproved",
+            "material_classifier_pending",
+            "loading_estimator_pending",
+        ]
+        if truncated_by_frame_limit:
+            base_quality_flags.append("truncated_at_max_frames")
+            base_review_reasons.append("video_truncated_at_max_frames")
+
+        surviving_track_ids = [
+            tid for tid in ordered_track_ids if len(grouped_observations[tid]) >= min_obs
+        ]
 
         wagons: list[ConsolidatedWagonDraft] = []
-        for seq_idx, tid in enumerate(ordered_track_ids, start=1):
+        for seq_idx, tid in enumerate(surviving_track_ids, start=1):
             entries = grouped_observations[tid]
             obs_drafts = [
                 ObservationDraft(
@@ -407,17 +471,9 @@ class VisionInspectionInferenceEngine(InspectionInferenceEngine):
                     physical_volume_verified=False,
                     consolidation_method="bytetrack_detection_only",
                     disagreements=[],
-                    quality_flags=[
-                        "poc_detector_exp04c",
-                        "material_not_evaluated",
-                        "loading_not_evaluated",
-                    ],
+                    quality_flags=list(base_quality_flags),
                     review_required=True,
-                    review_reasons=[
-                        "poc_detector_exp04c_unapproved",
-                        "material_classifier_pending",
-                        "loading_estimator_pending",
-                    ],
+                    review_reasons=list(base_review_reasons),
                     model_versions=model_map,
                     example=False,
                     observations=obs_drafts,

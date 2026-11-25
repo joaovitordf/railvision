@@ -5,6 +5,6 @@ export const INSPECTION_DETAILS_ROUTES: Routes = [
   {
     path: '',
     component: InspectionDetailPageComponent,
-    data: { title: 'Detalhe da inspeção', icon: 'video_library' },
+    data: { title: 'Detalhe da inspeção', icon: 'train' },
   },
 ];

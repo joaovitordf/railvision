@@ -111,4 +111,25 @@ describe('RailvisionApiService', () => {
       'O conteúdo do arquivo não corresponde a um container de vídeo válido.'
     );
   });
+
+  it('calls getWagon and listModels with optional includePlaceholders query param', () => {
+    let wagonId = '';
+    service.getWagon('insp-1', 'wag-9').subscribe((w) => {
+      wagonId = w.id;
+    });
+    const wagonReq = httpMock.expectOne('/api/v1/inspections/insp-1/wagons/wag-9');
+    expect(wagonReq.request.method).toBe('GET');
+    wagonReq.flush({ id: 'wag-9' });
+    expect(wagonId).toBe('wag-9');
+
+    service.listModels().subscribe();
+    const modelsDefaultReq = httpMock.expectOne('/api/v1/models');
+    expect(modelsDefaultReq.request.method).toBe('GET');
+    modelsDefaultReq.flush([]);
+
+    service.listModels(true).subscribe();
+    const modelsAllReq = httpMock.expectOne('/api/v1/models?includePlaceholders=true');
+    expect(modelsAllReq.request.method).toBe('GET');
+    modelsAllReq.flush([]);
+  });
 });

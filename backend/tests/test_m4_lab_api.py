@@ -6,12 +6,14 @@ from pathlib import Path
 import time
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.core.config import get_settings
 from app.core.paths import REPO_ROOT
 from app.main import create_app
 
 
+@pytest.mark.gpu
 def test_lab_status_analyze_image_video_bytetrack_and_history(tmp_path: Path) -> None:
     """Exercise /api/v1/onnx-spike status, CUDA vs ONNX CPU image inference, tracked video, and Range streaming."""
     settings = get_settings().model_copy(

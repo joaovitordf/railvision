@@ -6,6 +6,8 @@ describe('Shared Domain Label Pipes', () => {
     const pipe = new MaterialLabelPipe();
     expect(pipe.transform(null)).toBe('N/A (vagão vazio)');
     expect(pipe.transform(undefined)).toBe('N/A (vagão vazio)');
+    expect(pipe.transform(null, 'empty')).toBe('N/A (vagão vazio)');
+    expect(pipe.transform(null, 'not_evaluated')).toBe('Não avaliado');
     expect(pipe.transform('iron_ore')).toBe('Minério de ferro');
     expect(pipe.transform('coal')).toBe('Carvão');
     expect(pipe.transform('unknown')).toBe('Desconhecido');

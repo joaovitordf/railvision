@@ -16,13 +16,13 @@ export const NAVIGATION_ITEMS: NavigationItem[] = [
     icon: 'train',
   },
   {
-    label: 'Relatórios',
-    route: '/reports',
-    icon: 'summarize',
+    label: 'Anotações',
+    route: '/annotations',
+    icon: 'crop_free',
   },
   {
-    label: 'Laboratório de Visão',
-    route: '/onnx-lab',
-    icon: 'biotech',
+    label: 'Laboratório',
+    route: '/lab',
+    icon: 'science',
   },
 ];

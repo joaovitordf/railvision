@@ -53,14 +53,21 @@ export class RailvisionApiService {
     );
   }
 
+  getWagon(inspectionId: string, wagonId: string): Observable<WagonResult> {
+    return this.http.get<WagonResult>(
+      `${this.baseUrl}/inspections/${encodeURIComponent(inspectionId)}/wagons/${encodeURIComponent(wagonId)}`
+    );
+  }
+
   listObservations(inspectionId: string, wagonId: string): Observable<WagonObservation[]> {
     return this.http.get<WagonObservation[]>(
       `${this.baseUrl}/inspections/${encodeURIComponent(inspectionId)}/wagons/${encodeURIComponent(wagonId)}/observations`
     );
   }
 
-  listModels(): Observable<ModelVersion[]> {
-    return this.http.get<ModelVersion[]>(`${this.baseUrl}/models`);
+  listModels(includePlaceholders = false): Observable<ModelVersion[]> {
+    const query = includePlaceholders ? '?includePlaceholders=true' : '';
+    return this.http.get<ModelVersion[]>(`${this.baseUrl}/models${query}`);
   }
 
   mediaUrl(inspectionId: string): string {

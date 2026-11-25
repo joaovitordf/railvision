@@ -1,5 +1,22 @@
-import { Routes } from '@angular/router';
+import { Component, OnInit, inject } from '@angular/core';
+import { Router, Routes } from '@angular/router';
 import { ShellComponent } from './core/layout/shell/shell.component';
+
+@Component({
+  selector: 'rv-reports-redirect',
+  standalone: true,
+  template: '',
+})
+export class ReportsRedirectComponent implements OnInit {
+  private readonly router = inject(Router);
+
+  ngOnInit(): void {
+    this.router.navigate(['/inspections'], {
+      queryParams: { tab: 'reports' },
+      replaceUrl: true,
+    });
+  }
+}
 
 export const routes: Routes = [
   {
@@ -10,6 +27,14 @@ export const routes: Routes = [
         path: 'overview',
         loadChildren: () =>
           import('./features/overview/overview.routes').then((m) => m.OVERVIEW_ROUTES),
+      },
+      {
+        path: 'inspections/:id/report',
+        loadChildren: () =>
+          import('./features/inspection-details/inspection-details.routes').then(
+            (m) => m.INSPECTION_DETAILS_ROUTES
+          ),
+        data: { initialTab: 'report' },
       },
       {
         path: 'inspections/:id',
@@ -25,13 +50,27 @@ export const routes: Routes = [
       },
       {
         path: 'reports',
+        component: ReportsRedirectComponent,
+      },
+      {
+        path: 'annotations',
         loadChildren: () =>
-          import('./features/reports/reports.routes').then((m) => m.REPORTS_ROUTES),
+          import('./features/annotations/annotations.routes').then((m) => m.ANNOTATIONS_ROUTES),
+      },
+      {
+        path: 'lab',
+        loadChildren: () =>
+          import('./features/lab/lab.routes').then((m) => m.LAB_ROUTES),
+      },
+      {
+        path: 'vision-lab',
+        pathMatch: 'full',
+        redirectTo: 'lab',
       },
       {
         path: 'onnx-lab',
-        loadChildren: () =>
-          import('./features/onnx-lab/onnx-lab.routes').then((m) => m.ONNX_LAB_ROUTES),
+        pathMatch: 'full',
+        redirectTo: 'lab',
       },
       {
         path: '',

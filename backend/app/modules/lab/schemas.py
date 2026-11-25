@@ -48,6 +48,7 @@ class RuntimeStatusDto(CamelModel):
     video_encoder: str = "libx264"
     video_encoder_crf: int = 23
     tracking_algorithms: list[str] = ["none", "bytetrack"]
+    active_model_id: str | None = None
 
 
 class InferenceTimingMetrics(CamelModel):
@@ -81,6 +82,7 @@ class ModelConfigUsed(CamelModel):
     tracking_status: str
     exploratory_notice: str
     runtime_id: str | None = None
+    model_id: str | None = None
     fallback_occurred: bool = False
     output_resolution: str | None = None
     tracker_algorithm: str | None = None
@@ -158,6 +160,8 @@ class VideoRunStatusDto(CamelModel):
     model_config_used: ModelConfigUsed = Field(alias="modelConfig")
     files: RunFileLinks
     frame_summaries: list[VideoFrameSummaryDto]
+    frame_summaries_truncated: bool = False
+    total_frame_summaries: int | None = None
     output_resolution: str | None = None
     output_width: int | None = None
     output_height: int | None = None
@@ -182,6 +186,85 @@ class RunListItemDto(CamelModel):
     device_type: str
     active_execution_provider: str
     model_name: str
+    model_id: str | None = None
     runtime_id: str | None = None
     tracking_integrated: bool = False
     unique_track_count: int | None = None
+
+
+class RunComparisonItemDto(CamelModel):
+    """Normalized summary of a single run within an A/B comparison."""
+
+    run_id: UUID
+    media_type: str
+    status: str
+    original_filename: str
+    model_name: str
+    model_id: str | None = None
+    model_sha256: str | None = None
+    source_experiment: str
+    input_size: int | None = None
+    runtime_id: str | None = None
+    device_type: str
+    conf_threshold: float | None = None
+    iou_threshold: float | None = None
+    sample_fps: float | None = None
+    source_resolution: str | None = None
+    output_resolution: str | None = None
+    tracking_integrated: bool = False
+    total_detections: int
+    unique_track_count: int | None = None
+    processing_fps: float | None = None
+    inference_only_fps: float | None = None
+    avg_frame_ms: float | None = None
+    p95_frame_ms: float | None = None
+
+
+class FrameComparisonDeltaDto(CamelModel):
+    """Per-frame detection delta when comparing two video runs."""
+
+    frame_index: int
+    timestamp_ms: int
+    detections_a: int
+    detections_b: int
+    delta: int
+
+
+class RunComparisonDto(CamelModel):
+    """Side-by-side A/B run comparison response."""
+
+    run_a: RunComparisonItemDto
+    run_b: RunComparisonItemDto
+    comparable: bool = True
+    comparability_warnings: list[str] = []
+    delta_detections: int
+    delta_processing_fps: float | None = None
+    delta_avg_frame_ms: float | None = None
+    frame_deltas: list[FrameComparisonDeltaDto] = []
+
+
+class CurateFrameRequest(CamelModel):
+    """Request to export a clean original frame + pre-annotations into HITL curation inbox."""
+
+    frame_index: int | None = Field(default=None, ge=0)
+    reason: str = Field(min_length=2, max_length=120)
+    notes: str | None = Field(default=None, max_length=1000)
+    target_campaign: str | None = Field(default=None, max_length=120)
+
+
+class CurationExportDto(CamelModel):
+    """Metadata of an exported clean frame waiting for 100% human review in CVAT."""
+
+    run_id: UUID
+    frame_index: int
+    image_path: str
+    label_path: str
+    metadata_path: str
+    source_sha256: str
+    model_sha256: str | None = None
+    reserved_benchmark_warning: bool = False
+    detection_count: int
+    reason: str
+    human_reviewed: bool
+    auto_train_eligible: bool
+    created_at: datetime

@@ -261,6 +261,7 @@ try {
 
 # 5. Iniciar Backend Python + FastAPI
 $backendPidToSave = $null
+$backendLaunchedHere = $false
 $existingBackendListener = Get-ListeningPid -Port $BackendPort
 if ($existingBackendListener) {
     if (Test-BackendReady -Port $BackendPort) {
@@ -280,7 +281,7 @@ if ($existingBackendListener) {
     Set-Content -Path $BackendErrLog -Value $null -Encoding UTF8
 
     $backendProc = Start-Process -FilePath $PythonExe `
-        -ArgumentList '-m', 'uvicorn', 'app.main:app', '--app-dir', 'backend', '--host', '127.0.0.1', '--port', "$BackendPort" `
+        -ArgumentList '-m', 'uvicorn', 'app.main:create_app', '--factory', '--app-dir', 'backend', '--host', '127.0.0.1', '--port', "$BackendPort" `
         -WorkingDirectory $RootDir `
         -RedirectStandardOutput $BackendOutLog `
         -RedirectStandardError $BackendErrLog `
@@ -307,6 +308,7 @@ if ($existingBackendListener) {
         & cmd.exe /c "taskkill /PID $($backendProc.Id) /T /F >nul 2>&1"
         exit 1
     }
+    $backendLaunchedHere = $true
     Write-Ok "Backend FastAPI pronto em http://127.0.0.1:$BackendPort."
 }
 
@@ -323,6 +325,9 @@ if ($existingFrontendListener) {
         if (-not $frontendPidToSave) { $frontendPidToSave = $existingFrontendListener }
     } else {
         Write-Err "Porta $FrontendPort ocupada por outro processo: $(Get-ProcessSummary $existingFrontendListener)."
+        if ($backendLaunchedHere -and $backendPidToSave) {
+            & cmd.exe /c "taskkill /PID $backendPidToSave /T /F >nul 2>&1"
+        }
         exit 1
     }
 } else {
@@ -345,6 +350,9 @@ if ($existingFrontendListener) {
         if ($frontendProc.HasExited) {
             Write-Err "Frontend encerrou prematuramente (codigo $($frontendProc.ExitCode))."
             Show-LogTail -Title 'Frontend' -OutPath $FrontendOutLog -ErrPath $FrontendErrLog -Lines 40
+            if ($backendLaunchedHere -and $backendPidToSave) {
+                & cmd.exe /c "taskkill /PID $backendPidToSave /T /F >nul 2>&1"
+            }
             exit 1
         }
         if (Test-FrontendReady -Port $FrontendPort) {
@@ -357,6 +365,9 @@ if ($existingFrontendListener) {
         Write-Err "Frontend nao respondeu em http://localhost:$FrontendPort dentro de 90 segundos."
         Show-LogTail -Title 'Frontend' -OutPath $FrontendOutLog -ErrPath $FrontendErrLog -Lines 40
         & cmd.exe /c "taskkill /PID $($frontendProc.Id) /T /F >nul 2>&1"
+        if ($backendLaunchedHere -and $backendPidToSave) {
+            & cmd.exe /c "taskkill /PID $backendPidToSave /T /F >nul 2>&1"
+        }
         exit 1
     }
     Write-Ok "Frontend pronto em http://localhost:$FrontendPort."

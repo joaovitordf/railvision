@@ -1,15 +1,43 @@
 openapi: 3.1.0
 info:
   title: RailVision AI API
-  version: 0.3.0
+  version: 0.4.0
   description: >
     Contrato REST do backend Python + FastAPI do RailVision AI.
-    Novas inspeções executam detecção real (PyTorch CUDA) e rastreamento ByteTrack sobre vídeos locais;
+    Novas inspeções executam detecção real (PyTorch CUDA por padrão) e rastreamento ByteTrack sobre vídeos locais;
     campos de material e nível ordinal permanecem marcados como not_evaluated até treinamento da Fase 5.
 servers:
   - url: http://127.0.0.1:8080
     description: Servidor local MVP
 paths:
+  /health:
+    get:
+      summary: Sonda simplificada de disponibilidade da API FastAPI
+      operationId: getHealth
+      responses:
+        "200":
+          description: Estado básico de execução
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /actuator/health:
+    get:
+      summary: Sonda detalhada de prontidão (armazenamento e PostgreSQL)
+      operationId: getActuatorHealth
+      responses:
+        "200":
+          description: Todos os componentes operacionais (UP)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActuatorHealthResponse"
+        "503":
+          description: Armazenamento ou PostgreSQL indisponível (DOWN)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActuatorHealthResponse"
   /api/v1/inspections:
     get:
       summary: Listar inspeções
@@ -46,12 +74,18 @@ paths:
       responses:
         "201":
           description: Inspeção criada
+          headers:
+            Location:
+              description: URL absoluta da inspeção recém-criada
+              schema:
+                type: string
+                format: uri
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/InspectionSummary"
         "400":
-          description: Arquivo ausente ou formato/assinatura inválidos
+          description: Arquivo ausente, nome/notas inválidos ou formato/assinatura não suportados
           content:
             application/problem+json:
               schema:
@@ -87,6 +121,12 @@ paths:
       operationId: processInspection
       parameters:
         - $ref: "#/components/parameters/UuidPathId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProcessInspectionRequest"
       responses:
         "202":
           description: Job enfileirado
@@ -94,6 +134,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProcessingJobResponse"
+        "400":
+          description: Parâmetro de runtime ou modelo inválido
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
         "404":
           description: Inspeção não encontrada
           content:
@@ -146,6 +192,12 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/WagonResultResponse"
+        "404":
+          description: Inspeção não encontrada
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
   /api/v1/inspections/{id}/wagons/{wagonId}:
     get:
       summary: Obter resultado consolidado de um vagão específico
@@ -165,9 +217,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WagonResultResponse"
+        "404":
+          description: Inspeção ou vagão não encontrado
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
   /api/v1/inspections/{id}/wagons/{wagonId}/observations:
     get:
-      summary: Listar observações selecionadas de um vagão
+      summary: Listar observações de um vagão consolidado
       operationId: listWagonObservations
       parameters:
         - $ref: "#/components/parameters/UuidPathId"
@@ -186,6 +244,12 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/WagonObservationResponse"
+        "404":
+          description: Inspeção ou vagão não encontrado
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
   /api/v1/jobs/{id}:
     get:
       summary: Consultar status de job de processamento
@@ -199,10 +263,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProcessingJobResponse"
+        "404":
+          description: Job não encontrado
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
   /api/v1/models:
     get:
-      summary: Listar versões de modelo registradas
+      summary: Listar versões de modelo registradas no banco
       operationId: listModelVersions
+      parameters:
+        - name: includePlaceholders
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Versões de modelo
@@ -212,6 +289,422 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ModelVersionResponse"
+  /api/v1/models/checkpoints:
+    get:
+      summary: Listar checkpoints locais disponíveis no Model Registry
+      operationId: listRegisteredCheckpoints
+      responses:
+        "200":
+          description: Checkpoints selecionáveis pelo Laboratório de Visão e por inspeções
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RegisteredCheckpoint"
+  /api/v1/vision-lab/status:
+    get:
+      summary: Diagnóstico de hardware, runtime ativo e opções do Laboratório de Visão
+      description: Alias retrocompatível disponível em /api/v1/onnx-spike/status
+      operationId: getVisionLabStatus
+      responses:
+        "200":
+          description: Diagnóstico atual de runtime e modelos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeStatus"
+  /api/v1/vision-lab/analyze-image:
+    post:
+      summary: Executar inferência síncrona em uma imagem local
+      description: Alias retrocompatível disponível em /api/v1/onnx-spike/analyze-image
+      operationId: analyzeLabImage
+      parameters:
+        - name: conf
+          in: query
+          schema:
+            type: number
+        - name: iou
+          in: query
+          schema:
+            type: number
+        - name: runtime
+          in: query
+          schema:
+            type: string
+        - name: allowCpuFallback
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: modelId
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Resultado da análise da imagem
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageRunResult"
+        "400":
+          description: Imagem inválida ou parâmetros incorretos
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "503":
+          description: Runtime ou checkpoint indisponível
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+  /api/v1/vision-lab/analyze-video:
+    post:
+      summary: Submeter análise assíncrona de vídeo com tracking opcional
+      description: Alias retrocompatível disponível em /api/v1/onnx-spike/analyze-video
+      operationId: analyzeLabVideo
+      parameters:
+        - name: conf
+          in: query
+          schema:
+            type: number
+        - name: iou
+          in: query
+          schema:
+            type: number
+        - name: sampleFps
+          in: query
+          schema:
+            type: number
+        - name: runtime
+          in: query
+          schema:
+            type: string
+        - name: allowCpuFallback
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: outputResolution
+          in: query
+          schema:
+            type: string
+            enum: [1080p, native]
+            default: 1080p
+        - name: enableTracking
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: modelId
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "202":
+          description: Execução de vídeo enfileirada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoRunStatus"
+  /api/v1/vision-lab/runs:
+    get:
+      summary: Listar execuções recentes do Laboratório de Visão
+      description: Alias retrocompatível disponível em /api/v1/onnx-spike/runs
+      operationId: listLabRuns
+      responses:
+        "200":
+          description: Histórico de execuções locais (inclui histórico Java preservado)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RunListItem"
+  /api/v1/vision-lab/runs/{id}:
+    get:
+      summary: Obter detalhes completos de uma execução do laboratório
+      description: Alias retrocompatível disponível em /api/v1/onnx-spike/runs/{id}
+      operationId: getLabRun
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "200":
+          description: Resultado detalhado de imagem ou vídeo
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ImageRunResult"
+                  - $ref: "#/components/schemas/VideoRunStatus"
+  /api/v1/vision-lab/runs/{id}/files/{kind}:
+    get:
+      summary: Transmitir ou baixar arquivo original ou anotado de uma execução do laboratório
+      description: Alias retrocompatível disponível em /api/v1/onnx-spike/runs/{id}/files/{kind}
+      operationId: streamLabRunFile
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [original, annotated]
+        - name: download
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Arquivo completo
+        "206":
+          description: Conteúdo parcial (byte-range)
+  /api/v1/vision-lab/compare:
+    get:
+      summary: Comparar duas execuções do laboratório (deltas de detecção e latência)
+      description: Alias retrocompatível disponível em /api/v1/onnx-spike/compare
+      operationId: compareLabRuns
+      parameters:
+        - name: runA
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: runB
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Comparação estruturada A/B entre duas execuções
+  /api/v1/vision-lab/runs/{id}/curate-frame:
+    post:
+      summary: Capturar frame limpo + pré-anotações YOLO para curadoria humana no CVAT
+      description: Alias retrocompatível disponível em /api/v1/onnx-spike/runs/{id}/curate-frame
+      operationId: curateLabFrame
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "201":
+          description: Pacote salvo em curation-inbox aguardando revisão humana
+  /api/v1/annotations/projects:
+    get:
+      summary: Listar projetos isolados do Annotation Studio
+      operationId: listAnnotationProjects
+      responses:
+        "200":
+          description: Lista de projetos de anotação com contadores por status
+    post:
+      summary: Criar projeto isolado do Annotation Studio
+      operationId: createAnnotationProject
+      responses:
+        "201":
+          description: Projeto criado
+  /api/v1/annotations/projects/{id}:
+    get:
+      summary: Obter detalhes do projeto de anotação com filtros de status/busca
+      operationId: getAnnotationProject
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "200":
+          description: Detalhes, vídeos e itens do projeto
+    delete:
+      summary: Excluir workspace isolado do projeto de anotação
+      operationId: deleteAnnotationProject
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "204":
+          description: Projeto removido
+  /api/v1/annotations/projects/{id}/images:
+    post:
+      summary: Enviar uma ou múltiplas imagens para anotação
+      operationId: uploadAnnotationImages
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "201":
+          description: Imagens validadas e registradas com SHA-256
+  /api/v1/annotations/projects/{id}/videos:
+    post:
+      summary: Enviar vídeo para extração configurável de frames
+      operationId: uploadAnnotationVideo
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "201":
+          description: Vídeo validado com metadados técnicos
+  /api/v1/annotations/projects/{id}/videos/{videoId}/preview-frames:
+    post:
+      summary: Gerar miniaturas candidatas deduplicadas para seleção de frames
+      operationId: previewAnnotationVideoFrames
+      responses:
+        "200":
+          description: Candidatos com frameIndex, timestampMs e diffScore
+  /api/v1/annotations/projects/{id}/videos/{videoId}/extract-frames:
+    post:
+      summary: Importar frames selecionados em resolução original para o projeto
+      operationId: extractAnnotationVideoFrames
+      responses:
+        "201":
+          description: Frames extraídos e registrados
+  /api/v1/annotations/projects/{id}/import-curation-inbox:
+    post:
+      summary: Importar pacotes não duplicados de data/processed/curation-inbox
+      operationId: importCurationInboxToProject
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "200":
+          description: Resumo de itens importados
+  /api/v1/annotations/projects/{id}/items/{itemId}:
+    get:
+      summary: Obter detalhes, caixas e proveniência de um item
+      operationId: getAnnotationItem
+      responses:
+        "200":
+          description: Detalhe do item
+    delete:
+      summary: Remover item do projeto de anotação
+      operationId: deleteAnnotationItem
+      responses:
+        "204":
+          description: Item removido
+  /api/v1/annotations/projects/{id}/items/{itemId}/annotations:
+    put:
+      summary: Persistir bounding boxes revisadas, confirmação de negativo e status
+      operationId: updateItemAnnotations
+      responses:
+        "200":
+          description: Anotações salvas com proveniência humana
+  /api/v1/annotations/projects/{id}/items/{itemId}/preannotate:
+    post:
+      summary: Executar pré-anotação assistida por IA em um item
+      operationId: preannotateAnnotationItem
+      responses:
+        "200":
+          description: Item atualizado com sugestões de IA (humanReviewed=false)
+  /api/v1/annotations/projects/{id}/preannotate-batch:
+    post:
+      summary: Executar pré-anotação em lote sobre itens pendentes
+      operationId: preannotateAnnotationBatch
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "200":
+          description: Resumo do processamento em lote
+  /api/v1/annotations/projects/{id}/export-yolo:
+    post:
+      summary: Exportar pacote CVAT YOLO 1.1 .zip com trava de revisão humana
+      operationId: exportAnnotationProjectYolo
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "200":
+          description: Pacote zip compatível com CVAT YOLO 1.1
+        "409":
+          description: Nenhum item com revisão humana disponível para exportação
+  /api/v1/annotations/projects/{id}/import-yolo:
+    post:
+      summary: Importar pacote CVAT YOLO 1.1 .zip para o projeto
+      operationId: importAnnotationProjectYolo
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "201":
+          description: Imagens e caixas YOLO importadas
+  /api/v1/training/overview:
+    get:
+      summary: Obter visão geral da linha de versões de treinamento, datasets disponíveis e baseline
+      operationId: getTrainingOverview
+      responses:
+        "200":
+          description: Estado consolidado da aba Treinamento
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingOverview"
+  /api/v1/training/runs:
+    get:
+      summary: Listar execuções de treinamento gerenciadas
+      operationId: listTrainingRuns
+      responses:
+        "200":
+          description: Lista de versões treinadas
+    post:
+      summary: Iniciar nova rodada incremental de treinamento na GPU
+      operationId: startTrainingRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartTrainingRequest"
+      responses:
+        "202":
+          description: Treinamento enfileirado e iniciado em subprocesso GPU
+        "409":
+          description: Já existe um treinamento ativo na GPU
+  /api/v1/training/runs/{id}:
+    get:
+      summary: Obter curvas por época (results.csv ao vivo) e logs de uma rodada
+      operationId: getTrainingRun
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "200":
+          description: Detalhes e série histórica por época
+  /api/v1/training/runs/{id}/stop:
+    post:
+      summary: Interromper treinamento ativo preservando pesos parciais
+      operationId: stopTrainingRun
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "200":
+          description: Treinamento marcado como CANCELLED
+  /api/v1/training/runs/{id}/register:
+    post:
+      summary: Registrar checkpoint best.pt concluído no Model Registry como candidato
+      operationId: registerTrainingCheckpoint
+      parameters:
+        - $ref: "#/components/parameters/UuidPathId"
+      responses:
+        "201":
+          description: Checkpoint registrado em artifacts/models/registry.json
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelCheckpointDto"
 components:
   parameters:
     UuidPathId:
@@ -222,6 +715,33 @@ components:
         type: string
         format: uuid
   schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        stage:
+          type: string
+        version:
+          type: string
+        backend:
+          type: string
+        storageWritable:
+          type: boolean
+        dbReachable:
+          type: boolean
+        defaultRuntime:
+          type: string
+        cudaAvailable:
+          type: boolean
+    ActuatorHealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN]
+        components:
+          type: object
     ProblemDetail:
       type: object
       properties:
@@ -235,6 +755,24 @@ components:
           type: string
         instance:
           type: string
+        errorCode:
+          type: string
+    ProcessInspectionRequest:
+      type: object
+      properties:
+        modelId:
+          type: ["string", "null"]
+        runtime:
+          type: ["string", "null"]
+        allowCpuFallback:
+          type: boolean
+          default: false
+        confThreshold:
+          type: ["number", "null"]
+        iouThreshold:
+          type: ["number", "null"]
+        sampleFps:
+          type: ["number", "null"]
     InspectionSummary:
       type: object
       required: [id, title, status, originalFilename, contentType, fileSizeBytes, sha256Checksum, createdAt, updatedAt]
@@ -245,8 +783,7 @@ components:
         title:
           type: string
         notes:
-          type: string
-          nullable: true
+          type: ["string", "null"]
         status:
           type: string
           enum: [UPLOADED, QUEUED, PROCESSING, COMPLETED, FAILED]
@@ -260,9 +797,14 @@ components:
         sha256Checksum:
           type: string
         latestJobId:
-          type: string
+          type: ["string", "null"]
           format: uuid
-          nullable: true
+        durationMs:
+          type: ["integer", "null"]
+          format: int64
+        wagonCount:
+          type: integer
+          default: 0
         createdAt:
           type: string
           format: date-time
@@ -274,29 +816,20 @@ components:
         - $ref: "#/components/schemas/InspectionSummary"
         - type: object
           properties:
-            durationMs:
-              type: integer
-              format: int64
-              nullable: true
             widthPx:
-              type: integer
-              nullable: true
+              type: ["integer", "null"]
             heightPx:
-              type: integer
-              nullable: true
+              type: ["integer", "null"]
             fps:
-              type: number
-              nullable: true
+              type: ["number", "null"]
             codec:
-              type: string
-              nullable: true
-            wagonCount:
-              type: integer
+              type: ["string", "null"]
             reviewRequiredCount:
               type: integer
             latestJob:
-              $ref: "#/components/schemas/ProcessingJobResponse"
-              nullable: true
+              oneOf:
+                - $ref: "#/components/schemas/ProcessingJobResponse"
+                - type: "null"
     ProcessingJobResponse:
       type: object
       required: [id, inspectionId, status, engineType, isDemoSimulation, createdAt]
@@ -311,26 +844,21 @@ components:
           type: string
           enum: [QUEUED, RUNNING, COMPLETED, FAILED]
         progressPercent:
-          type: integer
-          nullable: true
+          type: ["integer", "null"]
         engineType:
           type: string
         isDemoSimulation:
           type: boolean
         errorCode:
-          type: string
-          nullable: true
+          type: ["string", "null"]
         errorMessage:
-          type: string
-          nullable: true
+          type: ["string", "null"]
         startedAt:
-          type: string
+          type: ["string", "null"]
           format: date-time
-          nullable: true
         finishedAt:
-          type: string
+          type: ["string", "null"]
           format: date-time
-          nullable: true
         createdAt:
           type: string
           format: date-time
@@ -355,57 +883,45 @@ components:
             sequenceIndex:
               type: integer
             physicalId:
-              type: string
-              nullable: true
+              type: ["string", "null"]
         material:
-          type: object
-          nullable: true
           description: Null quando loadingEstimate.level == 'empty'
-          properties:
-            materialClass:
-              type: string
-            confidence:
-              type: number
-            voteDistribution:
-              type: object
-              additionalProperties:
-                type: integer
-            rejectedAsUnknown:
-              type: boolean
+          oneOf:
+            - type: object
+              properties:
+                materialClass:
+                  type: ["string", "null"]
+                confidence:
+                  type: ["number", "null"]
+                voteDistribution:
+                  type: object
+                  additionalProperties:
+                    type: integer
+                rejectedAsUnknown:
+                  type: boolean
+            - type: "null"
         loadingEstimate:
           type: object
           properties:
             level:
               type: string
-              enum: [empty, low, medium, high, very_high]
+              enum: [empty, low, medium, high, very_high, unknown, not_evaluated]
             levelObservationSpread:
               type: array
               items:
                 type: string
             estimatedFillPercentage:
-              type: number
-              nullable: true
+              type: ["number", "null"]
             confidence:
-              type: number
+              type: ["number", "null"]
             measurementType:
               type: string
             physicalVolumeVerified:
               type: boolean
         modelVersions:
           type: object
-          properties:
-            detector:
-              type: string
-              nullable: true
-            tracker:
-              type: string
-              nullable: true
-            material:
-              type: string
-              nullable: true
-            loading:
-              type: string
-              nullable: true
+          additionalProperties:
+            type: ["string", "null"]
         consolidation:
           type: object
           properties:
@@ -416,8 +932,7 @@ components:
               items:
                 type: string
             method:
-              type: string
-              nullable: true
+              type: ["string", "null"]
         qualityFlags:
           type: array
           items:
@@ -465,17 +980,13 @@ components:
         detectionConfidence:
           type: number
         materialClass:
-          type: string
-          nullable: true
+          type: ["string", "null"]
         materialConfidence:
-          type: number
-          nullable: true
+          type: ["number", "null"]
         loadingLevel:
-          type: string
-          nullable: true
+          type: ["string", "null"]
         loadingConfidence:
-          type: number
-          nullable: true
+          type: ["number", "null"]
         isExample:
           type: boolean
     ModelVersionResponse:
@@ -493,13 +1004,150 @@ components:
         runtime:
           type: string
         weightsSha256:
-          type: string
-          nullable: true
+          type: ["string", "null"]
         artifactRef:
-          type: string
-          nullable: true
+          type: ["string", "null"]
         isDemoPlaceholder:
           type: boolean
         createdAt:
           type: string
           format: date-time
+    ModelCheckpointDto:
+      type: object
+      properties:
+        id:
+          type: string
+        modelName:
+          type: string
+        sourceExperiment:
+          type: string
+        architecture:
+          type: string
+        status:
+          type: string
+        inputSize:
+          type: integer
+        classNames:
+          type: object
+          additionalProperties:
+            type: string
+        pytorchWeightsPath:
+          type: ["string", "null"]
+        pytorchWeightsSha256:
+          type: ["string", "null"]
+        onnxModelPath:
+          type: ["string", "null"]
+        onnxMetaPath:
+          type: ["string", "null"]
+        onnxModelSha256:
+          type: ["string", "null"]
+        limitationsNotice:
+          type: string
+        valMetrics:
+          type: object
+          additionalProperties:
+            type: number
+        testMetrics:
+          type: object
+          additionalProperties:
+            type: number
+    RuntimeStatus:
+      type: object
+      properties:
+        available:
+          type: boolean
+        modelName:
+          type: string
+        defaultRuntime:
+          type: string
+        activeModelId:
+          type: ["string", "null"]
+    ImageRunResult:
+      type: object
+      properties:
+        runId:
+          type: string
+          format: uuid
+        mediaType:
+          type: string
+        status:
+          type: string
+    VideoRunStatus:
+      type: object
+      properties:
+        runId:
+          type: string
+          format: uuid
+        mediaType:
+          type: string
+        status:
+          type: string
+        frameSummariesTruncated:
+          type: boolean
+        totalFrameSummaries:
+          type: ["integer", "null"]
+    RunListItem:
+      type: object
+      properties:
+        runId:
+          type: string
+          format: uuid
+        mediaType:
+          type: string
+        status:
+          type: string
+        originalFilename:
+          type: string
+    StartTrainingRequest:
+      type: object
+      properties:
+        datasetId:
+          type: string
+          default: open-top-yolo-v1
+        baseOverride:
+          type: ["string", "null"]
+        epochs:
+          type: integer
+          default: 30
+        patience:
+          type: integer
+          default: 15
+        imgsz:
+          type: integer
+          default: 640
+        batch:
+          type: integer
+          default: 8
+        freeze:
+          type: integer
+          default: 10
+        lr0:
+          type: number
+          default: 0.0005
+        cosLr:
+          type: boolean
+          default: true
+        notes:
+          type: ["string", "null"]
+    TrainingOverview:
+      type: object
+      properties:
+        lineageName:
+          type: string
+        baselineModelId:
+          type: string
+        nextVersionNumber:
+          type: integer
+        nextVersionLabel:
+          type: string
+        recommendedBaseId:
+          type: string
+        recommendedBaseLabel:
+          type: string
+        activeRunId:
+          type: ["string", "null"]
+          format: uuid
+        gpuAvailable:
+          type: boolean
+        gpuName:
+          type: ["string", "null"]

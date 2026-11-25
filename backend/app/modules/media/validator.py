@@ -10,13 +10,14 @@ from fastapi import UploadFile
 
 from app.core.exceptions import InvalidMediaException, MediaTooLargeException
 
-ALLOWED_VIDEO_EXTENSIONS = frozenset({"mp4", "mov", "mkv", "webm", "avi"})
+ALLOWED_VIDEO_EXTENSIONS = frozenset({"mp4", "mov", "mkv", "webm", "avi", "ogv"})
 EXTENSION_TO_MIME = {
     "mp4": "video/mp4",
     "mov": "video/quicktime",
     "mkv": "video/x-matroska",
     "webm": "video/webm",
     "avi": "video/x-msvideo",
+    "ogv": "video/ogg",
 }
 QUICKTIME_ATOMS = frozenset({b"ftyp", b"moov", b"wide", b"free", b"mdat"})
 
@@ -32,12 +33,17 @@ class ValidatedVideoMetadata:
 
 
 def sanitize_original_filename(raw_filename: str | None) -> str:
-    """Validate and clean an uploaded video filename against path traversal."""
+    """Validate and clean an uploaded video filename against path traversal and DB column bounds."""
     if raw_filename is None or not raw_filename.strip():
         raise InvalidMediaException("MISSING_FILENAME", "Nome do arquivo de vídeo ausente.")
     trimmed = raw_filename.strip()
     if ".." in trimmed or "/" in trimmed or "\\" in trimmed:
         raise InvalidMediaException("INVALID_FILENAME", "Nome de arquivo inválido.")
+    if len(trimmed) > 255:
+        raise InvalidMediaException(
+            "FILENAME_TOO_LONG",
+            "O nome do arquivo excede o limite de 255 caracteres.",
+        )
     return trimmed
 
 
@@ -59,6 +65,8 @@ def matches_container_signature(extension: str, header: bytes) -> bool:
         return len(header) >= 4 and header[:4] == b"\x1a\x45\xdf\xa3"
     if extension == "avi":
         return len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"AVI "
+    if extension == "ogv":
+        return len(header) >= 4 and header[:4] == b"OggS"
     return False
 
 
@@ -95,7 +103,7 @@ class VideoUploadValidator:
         if extension not in ALLOWED_VIDEO_EXTENSIONS:
             raise InvalidMediaException(
                 "UNSUPPORTED_EXTENSION",
-                "Formato de arquivo não suportado. Utilize MP4, MOV, MKV, WEBM ou AVI.",
+                "Formato de arquivo não suportado. Utilize MP4, MOV, MKV, WEBM, AVI ou OGV.",
             )
 
         try:

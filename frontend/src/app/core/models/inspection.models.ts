@@ -2,7 +2,7 @@ export type InspectionStatus = 'UPLOADED' | 'QUEUED' | 'PROCESSING' | 'COMPLETED
 
 export type JobStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 
-export type LoadingLevel = 'empty' | 'low' | 'medium' | 'high' | 'very_high';
+export type LoadingLevel = 'empty' | 'low' | 'medium' | 'high' | 'very_high' | 'not_evaluated' | 'unknown';
 
 export interface ProblemDetail {
   type?: string;
@@ -23,6 +23,8 @@ export interface InspectionSummary {
   fileSizeBytes: number;
   sha256Checksum: string;
   latestJobId: string | null;
+  durationMs?: number | null;
+  wagonCount?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,7 +61,7 @@ export interface WagonIdentity {
 }
 
 export interface MaterialEstimate {
-  materialClass: string;
+  materialClass: string | null;
   confidence: number | null;
   voteDistribution: Record<string, number>;
   rejectedAsUnknown: boolean;

@@ -37,6 +37,7 @@ class Inspection(Base):
 
     __table_args__ = (
         sa.UniqueConstraint("stored_filename", name="inspections_stored_filename_key"),
+        sa.Index("idx_inspections_created_at_desc", created_at.desc()),
     )
 
     jobs: Mapped[list["ProcessingJob"]] = relationship(
@@ -77,6 +78,12 @@ class ProcessingJob(Base):
     __table_args__ = (
         sa.Index("idx_processing_jobs_inspection_created", inspection_id, created_at.desc()),
         sa.Index("idx_processing_jobs_status", status),
+        sa.Index(
+            "uq_processing_jobs_one_active_per_inspection",
+            inspection_id,
+            unique=True,
+            postgresql_where=sa.text("status IN ('QUEUED', 'RUNNING')"),
+        ),
     )
 
     inspection: Mapped["Inspection"] = relationship(back_populates="jobs")
@@ -105,7 +112,13 @@ class ModelVersion(Base):
     created_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        sa.UniqueConstraint("task", "name", "version", name="uq_model_versions_task_name_version"),
+        sa.UniqueConstraint(
+            "task",
+            "name",
+            "version",
+            "runtime",
+            name="uq_model_versions_task_name_version_runtime",
+        ),
     )
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import platform
 import shutil
 import tempfile
 import time
@@ -414,11 +415,81 @@ def summarize_ms(values_ms: list[float]) -> dict[str, float]:
     }
 
 
+def extract_raw_top_score(raw_output: np.ndarray) -> float:
+    """Extract maximum object/class confidence across standard [1, 4+nc, N] and end2end [1, N, 6] layouts."""
+    arr = np.asarray(raw_output, dtype=np.float32)
+    if arr.ndim != 3 or arr.shape[0] != 1 or arr.size == 0:
+        return 0.0
+    if arr.shape[2] == 6 and arr.shape[1] != 6:
+        return float(np.max(arr[0, :, 4]))
+    if arr.shape[1] >= 5:
+        return float(np.max(arr[0, 4:, :]))
+    return 0.0
+
+
+def build_model_metadata_payload(
+    *,
+    model_name: str,
+    source_experiment: str,
+    limitations_notice: str,
+    weights_path: Path,
+    output_onnx_path: Path,
+    source_sha256: str,
+    export_info: dict[str, Any],
+    input_name: str,
+    output_name: str,
+    args_opset: int,
+    args_imgsz: int,
+    args_conf: float,
+    args_iou: float,
+    repo_root: Path = REPO_ROOT,
+) -> dict[str, Any]:
+    """Build ONNX metadata sidecar JSON without hardcoded experiment identity."""
+    def _rel(p: Path) -> str:
+        try:
+            return p.resolve().relative_to(repo_root.resolve()).as_posix()
+        except ValueError:
+            return p.as_posix()
+
+    return {
+        "modelName": model_name,
+        "sourceExperiment": source_experiment,
+        "sourceWeightsRelativePath": _rel(weights_path),
+        "sourceWeightsSha256": source_sha256,
+        "onnxRelativePath": _rel(output_onnx_path),
+        "onnxSha256": export_info["onnxSha256"],
+        "onnxFileSizeBytes": export_info["onnxFileSizeBytes"],
+        "opset": args_opset,
+        "opsetImports": export_info["opsetImports"],
+        "imgsz": args_imgsz,
+        "end2end": export_info["end2end"],
+        "inputName": input_name,
+        "inputShape": export_info["graphInputs"][0]["dims"],
+        "outputName": output_name,
+        "outputShape": export_info["graphOutputs"][0]["dims"],
+        "classNames": {str(k): v for k, v in export_info["classNames"].items()},
+        "defaultConf": args_conf,
+        "defaultIou": args_iou,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "versions": {
+            "python": platform.python_version(),
+            "torch": torch.__version__,
+            "ultralytics": ultralytics.__version__,
+            "onnx": onnx.__version__,
+            "onnxruntime": ort.__version__,
+        },
+        "limitationsNotice": limitations_notice,
+    }
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Export exp04c to ONNX and verify PyTorch vs ONNX parity.")
+    parser = argparse.ArgumentParser(description="Export YOLO checkpoint to ONNX and verify PyTorch vs ONNX parity.")
     parser.add_argument("--weights", type=Path, default=DEFAULT_WEIGHTS)
     parser.add_argument("--output", type=Path, default=DEFAULT_ONNX_OUTPUT)
     parser.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
+    parser.add_argument("--model-name", default=None, help="Override metadata modelName (defaults to output stem)")
+    parser.add_argument("--source-experiment", default=None, help="Override sourceExperiment name")
+    parser.add_argument("--limitations-notice", default=None, help="Override model limitations notice")
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--conf", type=float, default=0.25)
@@ -431,6 +502,13 @@ def main() -> None:
     report_dir.mkdir(parents=True, exist_ok=True)
     parity_frames_dir = report_dir / "parity_frames"
     parity_frames_dir.mkdir(parents=True, exist_ok=True)
+
+    inferred_experiment = weights_path.parent.parent.name if weights_path.parent.name == "weights" else weights_path.stem
+    model_name = args.model_name or output_onnx_path.stem
+    source_experiment = args.source_experiment or inferred_experiment
+    limitations_notice = args.limitations_notice or (
+        f"Exported ONNX detector ({source_experiment}); verify Gate G3 criteria before production promotion."
+    )
 
     source_sha256 = sha256_file(weights_path)
     export_info = export_isolated_onnx(weights_path, output_onnx_path, imgsz=args.imgsz, opset=args.opset)
@@ -446,40 +524,22 @@ def main() -> None:
     input_name = ort_session.get_inputs()[0].name
     output_name = ort_session.get_outputs()[0].name
 
-    # Write model sidecar metadata
     meta_path = output_onnx_path.with_suffix(".meta.json")
-    model_meta_payload = {
-        "modelName": "exp04c_yolo26n_opentop_640",
-        "sourceExperiment": "exp04c_yolo26n_opentop_freeze10",
-        "sourceWeightsRelativePath": str(weights_path.relative_to(REPO_ROOT)).replace("\\", "/"),
-        "sourceWeightsSha256": source_sha256,
-        "onnxRelativePath": str(output_onnx_path.relative_to(REPO_ROOT)).replace("\\", "/"),
-        "onnxSha256": export_info["onnxSha256"],
-        "onnxFileSizeBytes": export_info["onnxFileSizeBytes"],
-        "opset": args.opset,
-        "opsetImports": export_info["opsetImports"],
-        "imgsz": args.imgsz,
-        "end2end": export_info["end2end"],
-        "inputName": input_name,
-        "inputShape": export_info["graphInputs"][0]["dims"],
-        "outputName": output_name,
-        "outputShape": export_info["graphOutputs"][0]["dims"],
-        "classNames": {str(k): v for k, v in class_names.items()},
-        "defaultConf": args.conf,
-        "defaultIou": args.iou,
-        "exportedAt": datetime.now(timezone.utc).isoformat(),
-        "versions": {
-            "python": torch.__version__,
-            "ultralytics": ultralytics.__version__,
-            "onnx": onnx.__version__,
-            "onnxruntime": ort.__version__,
-        },
-        "limitationsNotice": (
-            "PoC model (exp04c): good validation score on vid_15 (mAP50=0.9218), "
-            "limited generalization on held-out test vid_09/vid_16 (mAP50=0.2558). "
-            "Not approved for production."
-        ),
-    }
+    model_meta_payload = build_model_metadata_payload(
+        model_name=model_name,
+        source_experiment=source_experiment,
+        limitations_notice=limitations_notice,
+        weights_path=weights_path,
+        output_onnx_path=output_onnx_path,
+        source_sha256=source_sha256,
+        export_info=export_info,
+        input_name=input_name,
+        output_name=output_name,
+        args_opset=args.opset,
+        args_imgsz=args.imgsz,
+        args_conf=args.conf,
+        args_iou=args.iou,
+    )
     meta_path.write_text(json.dumps(model_meta_payload, indent=2), encoding="utf-8")
 
     # Prepare PyTorch CPU, PyTorch CUDA, and Ultralytics predictors
@@ -595,7 +655,7 @@ def main() -> None:
                 "height": lb_meta["orig_height"],
                 "expectedDetections": ort_dets,
                 "pytorchCpuCount": len(pt_cpu_dets),
-                "rawTopScore": float(np.max(ort_raw[0, 4:, :])),
+                "rawTopScore": extract_raw_top_score(ort_raw),
             }
         )
 

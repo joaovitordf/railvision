@@ -1,5 +1,6 @@
-import { Component, signal } from '@angular/core';
+import { Component, HostListener, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
+import { LayoutStateService } from '../../services/layout-state.service';
 import { FooterComponent } from '../footer/footer.component';
 import { SidebarComponent } from '../sidebar/sidebar.component';
 import { TopbarComponent } from '../topbar/topbar.component';
@@ -11,19 +12,16 @@ import { TopbarComponent } from '../topbar/topbar.component';
   template: `
     <div
       class="rv-shell"
-      [class.rv-shell--collapsed]="sidebarCollapsed()"
-      [class.rv-shell--mobile-open]="mobileMenuOpen()"
+      [class.rv-shell--collapsed]="layout.collapsed() && !layout.isMobile()"
+      [class.rv-shell--mobile-open]="layout.mobileOpen()"
+      [class.rv-shell--fullbleed]="layout.fullBleed()"
     >
-      <div class="rv-backdrop" (click)="closeMobileMenu()" aria-hidden="true"></div>
+      <div class="rv-backdrop" (click)="layout.closeMobileMenu()" aria-hidden="true"></div>
 
-      <rv-sidebar
-        [collapsed]="sidebarCollapsed()"
-        (toggleCollapse)="toggleSidebarCollapse()"
-        (navigate)="closeMobileMenu()"
-      />
+      <rv-sidebar />
 
       <div class="rv-main-column">
-        <rv-topbar (toggleMobileMenu)="toggleMobileMenu()" />
+        <rv-topbar />
 
         <main class="rv-content">
           <router-outlet />
@@ -35,18 +33,12 @@ import { TopbarComponent } from '../topbar/topbar.component';
   `,
 })
 export class ShellComponent {
-  protected readonly sidebarCollapsed = signal<boolean>(false);
-  protected readonly mobileMenuOpen = signal<boolean>(false);
+  protected readonly layout = inject(LayoutStateService);
 
-  protected toggleSidebarCollapse(): void {
-    this.sidebarCollapsed.update((value) => !value);
-  }
-
-  protected toggleMobileMenu(): void {
-    this.mobileMenuOpen.update((value) => !value);
-  }
-
-  protected closeMobileMenu(): void {
-    this.mobileMenuOpen.set(false);
+  @HostListener('document:keydown.escape')
+  protected onEscape(): void {
+    if (this.layout.mobileOpen()) {
+      this.layout.closeMobileMenu();
+    }
   }
 }

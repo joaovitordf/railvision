@@ -10,6 +10,8 @@ import cv2
 import pytest
 import torch
 
+pytestmark = pytest.mark.gpu
+
 from app.core.config import get_settings
 from app.core.exceptions import InvalidMediaException, RuntimeUnavailableException
 from app.core.paths import REPO_ROOT

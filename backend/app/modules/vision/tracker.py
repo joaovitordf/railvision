@@ -39,17 +39,26 @@ class ByteTrackSession:
         high_thresh: float = 0.25,
         low_thresh: float = 0.1,
         new_track_thresh: float | None = None,
-        track_buffer: int = 30,
+        sample_fps: float = 5.0,
+        buffer_seconds: float = 1.5,
+        track_buffer: int | None = None,
         match_thresh: float = 0.8,
     ) -> None:
+        resolved_fps = max(0.5, float(sample_fps))
+        resolved_buffer = (
+            max(1, int(track_buffer))
+            if track_buffer is not None
+            else max(3, int(round(float(buffer_seconds) * resolved_fps)))
+        )
         args = SimpleNamespace(
             track_high_thresh=max(0.05, float(high_thresh)),
-            track_low_thresh=float(low_thresh),
+            track_low_thresh=min(float(low_thresh), max(0.05, float(high_thresh))),
             new_track_thresh=float(new_track_thresh if new_track_thresh is not None else max(high_thresh, 0.25)),
-            track_buffer=int(track_buffer),
+            track_buffer=resolved_buffer,
             match_thresh=float(match_thresh),
             fuse_score=True,
         )
+        self.effective_track_buffer = resolved_buffer
         self._tracker = BYTETracker(args)
 
     @property

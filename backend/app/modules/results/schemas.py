@@ -101,3 +101,23 @@ class ModelVersionResponse(CamelModel):
     artifact_ref: str | None
     is_demo_placeholder: bool
     created_at: datetime
+
+
+class ModelCheckpointDto(CamelModel):
+    """Registered open-top wagon detection checkpoint entry from registry.json."""
+
+    id: str
+    model_name: str
+    source_experiment: str
+    architecture: str
+    status: str
+    input_size: int
+    class_names: dict[str, str]
+    pytorch_weights_path: str | None
+    pytorch_weights_sha256: str | None
+    onnx_model_path: str | None
+    onnx_meta_path: str | None
+    onnx_model_sha256: str | None
+    limitations_notice: str
+    val_metrics: dict[str, float]
+    test_metrics: dict[str, float]

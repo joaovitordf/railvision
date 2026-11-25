@@ -93,6 +93,26 @@ class Settings(BaseSettings):
         default="data/processed/onnx-spike-runs",
         validation_alias=AliasChoices("RAILVISION_ONNX_RUNS_ROOT", "onnx_runs_storage_path"),
     )
+    model_registry_path_raw: str = Field(
+        default="artifacts/models/registry.json",
+        validation_alias=AliasChoices("RAILVISION_MODEL_REGISTRY_PATH", "model_registry_path"),
+    )
+    curation_inbox_path_raw: str = Field(
+        default="data/processed/curation-inbox",
+        validation_alias=AliasChoices("RAILVISION_CURATION_INBOX_ROOT", "curation_inbox_path"),
+    )
+    annotation_studio_path_raw: str = Field(
+        default="data/processed/annotation-studio",
+        validation_alias=AliasChoices("RAILVISION_ANNOTATION_STUDIO_ROOT", "annotation_studio_path"),
+    )
+    training_runs_path_raw: str = Field(
+        default="artifacts/runs/training",
+        validation_alias=AliasChoices("RAILVISION_TRAINING_RUNS_ROOT", "training_runs_path"),
+    )
+    datasets_root_raw: str = Field(
+        default="data/processed",
+        validation_alias=AliasChoices("RAILVISION_DATASETS_ROOT", "datasets_root"),
+    )
     default_confidence_threshold: float = Field(
         default=0.25,
         validation_alias=AliasChoices("RAILVISION_DEFAULT_CONFIDENCE_THRESHOLD", "default_confidence_threshold"),
@@ -109,6 +129,16 @@ class Settings(BaseSettings):
         default=1080,
         validation_alias=AliasChoices("RAILVISION_OUTPUT_VIDEO_MAX_HEIGHT", "output_video_max_height"),
     )
+    min_track_observations: int = Field(
+        default=2,
+        validation_alias=AliasChoices("RAILVISION_MIN_TRACK_OBSERVATIONS", "min_track_observations"),
+    )
+
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        """Parse comma-separated CORS origins preserving single-origin defaults."""
+        origins = [item.strip() for item in self.cors_allowed_origin.split(",") if item.strip()]
+        return origins or ["http://localhost:4200"]
 
     @property
     def database_url(self) -> str:
@@ -146,6 +176,31 @@ class Settings(BaseSettings):
     def onnx_runs_storage_path(self) -> Path:
         """Resolved directory for lab inference runs."""
         return resolve_repo_path(self.onnx_runs_storage_path_raw)
+
+    @property
+    def model_registry_path(self) -> Path:
+        """Resolved path to declarative Model Registry JSON."""
+        return resolve_repo_path(self.model_registry_path_raw)
+
+    @property
+    def curation_inbox_path(self) -> Path:
+        """Resolved directory for HITL frame curation exports."""
+        return resolve_repo_path(self.curation_inbox_path_raw)
+
+    @property
+    def annotation_studio_path(self) -> Path:
+        """Resolved isolated workspace for the native Annotation Studio."""
+        return resolve_repo_path(self.annotation_studio_path_raw)
+
+    @property
+    def training_runs_path(self) -> Path:
+        """Resolved directory for UI-managed detector training runs."""
+        return resolve_repo_path(self.training_runs_path_raw)
+
+    @property
+    def datasets_root(self) -> Path:
+        """Resolved root directory containing processed YOLO datasets."""
+        return resolve_repo_path(self.datasets_root_raw)
 
 
 @lru_cache(maxsize=1)
